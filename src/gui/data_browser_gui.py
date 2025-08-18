@@ -1,0 +1,1174 @@
+"""
+Data Browser GUI - Interface for browsing and managing datasets.
+"""
+
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import sys
+import os
+from datetime import datetime
+from typing import Optional, List
+import subprocess
+import platform
+
+# Add src to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+from src.database.operations import DatasetOperations, ProcessingJobOperations, FigureOperations
+from src.database.models import Dataset
+
+
+class DataBrowserGUI:
+    """GUI for browsing and managing datasets."""
+    
+    def __init__(self):
+        self.window = tk.Toplevel()
+        self.window.title("Data Browser")
+        self.window.geometry("1200x800")
+        self.window.configure(bg='#f0f0f0')
+        
+        self.selected_dataset = None
+        self.datasets = []
+        self.filtered_datasets = []
+        
+        self.setup_ui()
+        self.load_datasets()
+    
+    def setup_ui(self):
+        """Set up the user interface."""
+        # Title
+        title_label = ttk.Label(self.window, text="Data Browser", font=("Arial", 16, "bold"))
+        title_label.pack(pady=10)
+        
+        # Main container with paned window
+        main_paned = ttk.PanedWindow(self.window, orient=tk.HORIZONTAL)
+        main_paned.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Left panel - Dataset list
+        self.create_dataset_list_panel(main_paned)
+        
+        # Right panel - Dataset details
+        self.create_dataset_details_panel(main_paned)
+    
+    def create_dataset_list_panel(self, parent):
+        """Create the left panel with dataset list and controls."""
+        left_frame = ttk.Frame(parent)
+        parent.add(left_frame, weight=1)
+        
+        # Search and filter frame
+        search_frame = ttk.LabelFrame(left_frame, text="Search & Filter", padding=10)
+        search_frame.pack(fill="x", padx=5, pady=5)
+        
+        # Search entry
+        ttk.Label(search_frame, text="Search:").grid(row=0, column=0, sticky="w", padx=5)
+        self.search_var = tk.StringVar()
+        self.search_var.trace('w', self.on_search_change)
+        search_entry = ttk.Entry(search_frame, textvariable=self.search_var, width=25)
+        search_entry.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Format filter
+        ttk.Label(search_frame, text="Format:").grid(row=1, column=0, sticky="w", padx=5)
+        self.format_filter_var = tk.StringVar()
+        self.format_filter_var.trace('w', self.on_filter_change)
+        format_combo = ttk.Combobox(search_frame, textvariable=self.format_filter_var,
+                                   values=["All", "csv", "xlsx", "json", "txt", "h5"], 
+                                   state="readonly", width=22)
+        format_combo.grid(row=1, column=1, padx=5, pady=2)
+        format_combo.set("All")
+        
+        # Sort options
+        ttk.Label(search_frame, text="Sort by:").grid(row=2, column=0, sticky="w", padx=5)
+        self.sort_var = tk.StringVar(value="import_date")
+        self.sort_var.trace('w', self.on_sort_change)
+        sort_combo = ttk.Combobox(search_frame, textvariable=self.sort_var,
+                                 values=["name", "import_date", "file_size", "file_format"],
+                                 state="readonly", width=22)
+        sort_combo.grid(row=2, column=1, padx=5, pady=2)
+        
+        # Dataset list frame
+        list_frame = ttk.LabelFrame(left_frame, text="Datasets", padding=5)
+        list_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Dataset treeview
+        columns = ("name", "format", "size", "date")
+        self.dataset_tree = ttk.Treeview(list_frame, columns=columns, show="tree headings", height=20)
+        
+        # Configure columns
+        self.dataset_tree.heading("#0", text="ID")
+        self.dataset_tree.heading("name", text="Name")
+        self.dataset_tree.heading("format", text="Format")
+        self.dataset_tree.heading("size", text="Size")
+        self.dataset_tree.heading("date", text="Import Date")
+        
+        self.dataset_tree.column("#0", width=50)
+        self.dataset_tree.column("name", width=200)
+        self.dataset_tree.column("format", width=80)
+        self.dataset_tree.column("size", width=100)
+        self.dataset_tree.column("date", width=120)
+        
+        # Scrollbar for treeview
+        tree_scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.dataset_tree.yview)
+        self.dataset_tree.configure(yscrollcommand=tree_scrollbar.set)
+        
+        self.dataset_tree.pack(side="left", fill="both", expand=True)
+        tree_scrollbar.pack(side="right", fill="y")
+        
+        # Bind selection event
+        self.dataset_tree.bind("<<TreeviewSelect>>", self.on_dataset_select)
+        
+        # Action buttons frame
+        action_frame = ttk.Frame(left_frame)
+        action_frame.pack(fill="x", padx=5, pady=5)
+        
+        ttk.Button(action_frame, text="Refresh", command=self.load_datasets).pack(side="left", padx=2)
+        ttk.Button(action_frame, text="Open File", command=self.open_dataset_file).pack(side="left", padx=2)
+        ttk.Button(action_frame, text="Edit", command=self.edit_dataset).pack(side="left", padx=2)
+        ttk.Button(action_frame, text="Delete", command=self.delete_dataset).pack(side="left", padx=2)
+    
+    def create_dataset_details_panel(self, parent):
+        """Create the right panel with dataset details."""
+        right_frame = ttk.Frame(parent)
+        parent.add(right_frame, weight=2)
+        
+        # Create notebook for different detail views
+        self.details_notebook = ttk.Notebook(right_frame)
+        self.details_notebook.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Basic info tab
+        self.create_basic_info_tab()
+        
+        # Processing history tab
+        self.create_processing_history_tab()
+        
+        # Figures tab
+        self.create_figures_tab()
+        
+        # Metadata tab
+        self.create_metadata_tab()
+    
+    def create_basic_info_tab(self):
+        """Create the basic information tab."""
+        info_frame = ttk.Frame(self.details_notebook)
+        self.details_notebook.add(info_frame, text="Basic Info")
+        
+        # Dataset info display
+        info_container = ttk.LabelFrame(info_frame, text="Dataset Information", padding=10)
+        info_container.pack(fill="x", padx=10, pady=5)
+        
+        # Create info labels
+        self.info_labels = {}
+        info_fields = [
+            ("ID:", "id"),
+            ("Name:", "name"),
+            ("File Path:", "file_path"),
+            ("File Format:", "file_format"),
+            ("File Size:", "file_size"),
+            ("Import Date:", "import_date"),
+            ("Description:", "description")
+        ]
+        
+        for i, (label_text, field_name) in enumerate(info_fields):
+            ttk.Label(info_container, text=label_text, font=("Arial", 9, "bold")).grid(
+                row=i, column=0, sticky="nw", padx=5, pady=2)
+            self.info_labels[field_name] = ttk.Label(info_container, text="", wraplength=400)
+            self.info_labels[field_name].grid(row=i, column=1, sticky="nw", padx=10, pady=2)
+        
+        # File operations frame
+        file_ops_frame = ttk.LabelFrame(info_frame, text="File Operations", padding=10)
+        file_ops_frame.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Button(file_ops_frame, text="Open File Location", 
+                  command=self.open_file_location).pack(side="left", padx=5)
+        ttk.Button(file_ops_frame, text="Copy File Path", 
+                  command=self.copy_file_path).pack(side="left", padx=5)
+        ttk.Button(file_ops_frame, text="Preview Data", 
+                  command=self.preview_data).pack(side="left", padx=5)
+        
+        # Statistics frame (placeholder for future data preview)
+        stats_frame = ttk.LabelFrame(info_frame, text="Quick Statistics", padding=10)
+        stats_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        self.stats_text = tk.Text(stats_frame, height=8, wrap=tk.WORD, state=tk.DISABLED)
+        stats_scrollbar = ttk.Scrollbar(stats_frame, orient="vertical", command=self.stats_text.yview)
+        self.stats_text.configure(yscrollcommand=stats_scrollbar.set)
+        
+        self.stats_text.pack(side="left", fill="both", expand=True)
+        stats_scrollbar.pack(side="right", fill="y")
+    
+    def create_processing_history_tab(self):
+        """Create the processing history tab."""
+        history_frame = ttk.Frame(self.details_notebook)
+        self.details_notebook.add(history_frame, text="Processing History")
+        
+        # Jobs list
+        jobs_frame = ttk.LabelFrame(history_frame, text="Processing Jobs", padding=5)
+        jobs_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Jobs treeview
+        job_columns = ("job_name", "job_type", "status", "start_time", "progress")
+        self.jobs_tree = ttk.Treeview(jobs_frame, columns=job_columns, show="headings", height=15)
+        
+        # Configure job columns
+        self.jobs_tree.heading("job_name", text="Job Name")
+        self.jobs_tree.heading("job_type", text="Type")
+        self.jobs_tree.heading("status", text="Status")
+        self.jobs_tree.heading("start_time", text="Start Time")
+        self.jobs_tree.heading("progress", text="Progress")
+        
+        self.jobs_tree.column("job_name", width=150)
+        self.jobs_tree.column("job_type", width=120)
+        self.jobs_tree.column("status", width=80)
+        self.jobs_tree.column("start_time", width=130)
+        self.jobs_tree.column("progress", width=80)
+        
+        # Jobs scrollbar
+        jobs_scrollbar = ttk.Scrollbar(jobs_frame, orient="vertical", command=self.jobs_tree.yview)
+        self.jobs_tree.configure(yscrollcommand=jobs_scrollbar.set)
+        
+        self.jobs_tree.pack(side="left", fill="both", expand=True)
+        jobs_scrollbar.pack(side="right", fill="y")
+        
+        # Job actions frame
+        job_actions_frame = ttk.Frame(history_frame)
+        job_actions_frame.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Button(job_actions_frame, text="View Job Details", 
+                  command=self.view_job_details).pack(side="left", padx=5)
+        ttk.Button(job_actions_frame, text="Open Output File", 
+                  command=self.open_job_output).pack(side="left", padx=5)
+        ttk.Button(job_actions_frame, text="Rerun Job", 
+                  command=self.rerun_job).pack(side="left", padx=5)
+    
+    def create_figures_tab(self):
+        """Create the figures tab."""
+        figures_frame = ttk.Frame(self.details_notebook)
+        self.details_notebook.add(figures_frame, text="Generated Figures")
+        
+        # Figures list
+        figs_frame = ttk.LabelFrame(figures_frame, text="Figures", padding=5)
+        figs_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Figures treeview
+        fig_columns = ("figure_name", "figure_type", "creation_date", "description")
+        self.figures_tree = ttk.Treeview(figs_frame, columns=fig_columns, show="headings", height=15)
+        
+        # Configure figure columns
+        self.figures_tree.heading("figure_name", text="Figure Name")
+        self.figures_tree.heading("figure_type", text="Type")
+        self.figures_tree.heading("creation_date", text="Created")
+        self.figures_tree.heading("description", text="Description")
+        
+        self.figures_tree.column("figure_name", width=150)
+        self.figures_tree.column("figure_type", width=80)
+        self.figures_tree.column("creation_date", width=130)
+        self.figures_tree.column("description", width=200)
+        
+        # Figures scrollbar
+        figs_scrollbar = ttk.Scrollbar(figs_frame, orient="vertical", command=self.figures_tree.yview)
+        self.figures_tree.configure(yscrollcommand=figs_scrollbar.set)
+        
+        self.figures_tree.pack(side="left", fill="both", expand=True)
+        figs_scrollbar.pack(side="right", fill="y")
+        
+        # Figure actions frame
+        fig_actions_frame = ttk.Frame(figures_frame)
+        fig_actions_frame.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Button(fig_actions_frame, text="Open Figure", 
+                  command=self.open_figure).pack(side="left", padx=5)
+        ttk.Button(fig_actions_frame, text="Copy Figure Path", 
+                  command=self.copy_figure_path).pack(side="left", padx=5)
+        ttk.Button(fig_actions_frame, text="Export Figure", 
+                  command=self.export_figure).pack(side="left", padx=5)
+    
+    def create_metadata_tab(self):
+        """Create the metadata tab."""
+        metadata_frame = ttk.Frame(self.details_notebook)
+        self.details_notebook.add(metadata_frame, text="Metadata")
+        
+        # Metadata display
+        meta_frame = ttk.LabelFrame(metadata_frame, text="Dataset Metadata", padding=10)
+        meta_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        self.metadata_text = tk.Text(meta_frame, wrap=tk.WORD)
+        meta_scrollbar = ttk.Scrollbar(meta_frame, orient="vertical", command=self.metadata_text.yview)
+        self.metadata_text.configure(yscrollcommand=meta_scrollbar.set)
+        
+        self.metadata_text.pack(side="left", fill="both", expand=True)
+        meta_scrollbar.pack(side="right", fill="y")
+        
+        # Metadata actions
+        meta_actions_frame = ttk.Frame(metadata_frame)
+        meta_actions_frame.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Button(meta_actions_frame, text="Edit Metadata", 
+                  command=self.edit_metadata).pack(side="left", padx=5)
+        ttk.Button(meta_actions_frame, text="Export Metadata", 
+                  command=self.export_metadata).pack(side="left", padx=5)
+    
+    def load_datasets(self):
+        """Load all datasets from database."""
+        try:
+            self.datasets = DatasetOperations.list_datasets()
+            self.apply_filters_and_display()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load datasets: {str(e)}")
+    
+    def apply_filters_and_display(self):
+        """Apply current filters and display datasets."""
+        # Apply search filter
+        search_term = self.search_var.get().lower()
+        format_filter = self.format_filter_var.get()
+        
+        self.filtered_datasets = []
+        for dataset in self.datasets:
+            # Search filter
+            if search_term and search_term not in dataset.name.lower() and search_term not in (dataset.description or "").lower():
+                continue
+            
+            # Format filter
+            if format_filter != "All" and dataset.file_format != format_filter:
+                continue
+            
+            self.filtered_datasets.append(dataset)
+        
+        # Apply sorting
+        sort_by = self.sort_var.get()
+        reverse = sort_by in ["import_date", "file_size"]  # Newest/largest first
+        
+        if sort_by == "name":
+            self.filtered_datasets.sort(key=lambda x: x.name.lower())
+        elif sort_by == "import_date":
+            self.filtered_datasets.sort(key=lambda x: x.import_date or datetime.min, reverse=reverse)
+        elif sort_by == "file_size":
+            self.filtered_datasets.sort(key=lambda x: x.file_size or 0, reverse=reverse)
+        elif sort_by == "file_format":
+            self.filtered_datasets.sort(key=lambda x: x.file_format or "")
+        
+        # Update display
+        self.update_dataset_display()
+    
+    def update_dataset_display(self):
+        """Update the dataset treeview display."""
+        # Clear existing items
+        for item in self.dataset_tree.get_children():
+            self.dataset_tree.delete(item)
+        
+        # Add filtered datasets
+        for dataset in self.filtered_datasets:
+            # Format file size
+            if dataset.file_size:
+                if dataset.file_size > 1024*1024:
+                    size_str = f"{dataset.file_size / (1024*1024):.1f} MB"
+                elif dataset.file_size > 1024:
+                    size_str = f"{dataset.file_size / 1024:.1f} KB"
+                else:
+                    size_str = f"{dataset.file_size} B"
+            else:
+                size_str = "Unknown"
+            
+            # Format date
+            date_str = dataset.import_date.strftime("%Y-%m-%d %H:%M") if dataset.import_date else "Unknown"
+            
+            self.dataset_tree.insert("", "end", text=str(dataset.id),
+                                   values=(dataset.name, dataset.file_format or "Unknown", 
+                                         size_str, date_str))
+    
+    def on_search_change(self, *args):
+        """Handle search text change."""
+        self.apply_filters_and_display()
+    
+    def on_filter_change(self, *args):
+        """Handle filter change."""
+        self.apply_filters_and_display()
+    
+    def on_sort_change(self, *args):
+        """Handle sort change."""
+        self.apply_filters_and_display()
+    
+    def on_dataset_select(self, event):
+        """Handle dataset selection."""
+        selection = self.dataset_tree.selection()
+        if selection:
+            item = self.dataset_tree.item(selection[0])
+            dataset_id = int(item['text'])
+            
+            # Find the dataset object
+            self.selected_dataset = next((d for d in self.filtered_datasets if d.id == dataset_id), None)
+            
+            if self.selected_dataset:
+                self.update_dataset_details()
+    
+    def update_dataset_details(self):
+        """Update the dataset details panel."""
+        if not self.selected_dataset:
+            return
+        
+        # Update basic info
+        self.info_labels["id"].config(text=str(self.selected_dataset.id))
+        self.info_labels["name"].config(text=self.selected_dataset.name)
+        self.info_labels["file_path"].config(text=self.selected_dataset.file_path)
+        self.info_labels["file_format"].config(text=self.selected_dataset.file_format or "Unknown")
+        
+        # Format file size
+        if self.selected_dataset.file_size:
+            if self.selected_dataset.file_size > 1024*1024:
+                size_text = f"{self.selected_dataset.file_size / (1024*1024):.2f} MB ({self.selected_dataset.file_size:,} bytes)"
+            elif self.selected_dataset.file_size > 1024:
+                size_text = f"{self.selected_dataset.file_size / 1024:.2f} KB ({self.selected_dataset.file_size:,} bytes)"
+            else:
+                size_text = f"{self.selected_dataset.file_size} bytes"
+        else:
+            size_text = "Unknown"
+        self.info_labels["file_size"].config(text=size_text)
+        
+        # Format date
+        date_text = self.selected_dataset.import_date.strftime("%Y-%m-%d %H:%M:%S") if self.selected_dataset.import_date else "Unknown"
+        self.info_labels["import_date"].config(text=date_text)
+        
+        self.info_labels["description"].config(text=self.selected_dataset.description or "No description")
+        
+        # Update processing history
+        self.update_processing_history()
+        
+        # Update figures
+        self.update_figures_list()
+        
+        # Update metadata
+        self.update_metadata_display()
+        
+        # Update statistics (placeholder)
+        self.update_statistics()
+    
+    def update_processing_history(self):
+        """Update the processing history tab."""
+        # Clear existing items
+        for item in self.jobs_tree.get_children():
+            self.jobs_tree.delete(item)
+        
+        if not self.selected_dataset:
+            return
+        
+        try:
+            jobs = ProcessingJobOperations.list_jobs_for_dataset(self.selected_dataset.id)
+            
+            for job in jobs:
+                start_time = job.start_time.strftime("%Y-%m-%d %H:%M") if job.start_time else "Unknown"
+                progress = f"{job.progress:.1f}%" if job.progress is not None else "N/A"
+                
+                self.jobs_tree.insert("", "end", values=(
+                    job.job_name, job.job_type, job.status, start_time, progress
+                ))
+                
+        except Exception as e:
+            print(f"Error loading processing history: {e}")
+    
+    def update_figures_list(self):
+        """Update the figures list."""
+        # Clear existing items
+        for item in self.figures_tree.get_children():
+            self.figures_tree.delete(item)
+        
+        if not self.selected_dataset:
+            return
+        
+        try:
+            figures = FigureOperations.list_figures_for_dataset(self.selected_dataset.id)
+            
+            for figure in figures:
+                creation_date = figure.creation_date.strftime("%Y-%m-%d %H:%M") if figure.creation_date else "Unknown"
+                
+                self.figures_tree.insert("", "end", values=(
+                    figure.figure_name, figure.figure_type, creation_date, figure.description or ""
+                ))
+                
+        except Exception as e:
+            print(f"Error loading figures: {e}")
+    
+    def update_metadata_display(self):
+        """Update the metadata display."""
+        self.metadata_text.config(state=tk.NORMAL)
+        self.metadata_text.delete(1.0, tk.END)
+        
+        if self.selected_dataset and self.selected_dataset.metadata:
+            import json
+            try:
+                formatted_metadata = json.dumps(self.selected_dataset.metadata, indent=2)
+                self.metadata_text.insert(1.0, formatted_metadata)
+            except:
+                self.metadata_text.insert(1.0, str(self.selected_dataset.metadata))
+        else:
+            self.metadata_text.insert(1.0, "No metadata available")
+        
+        self.metadata_text.config(state=tk.DISABLED)
+    
+    def update_statistics(self):
+        """Update the statistics display (placeholder)."""
+        self.stats_text.config(state=tk.NORMAL)
+        self.stats_text.delete(1.0, tk.END)
+        
+        if self.selected_dataset:
+            stats_text = f"Dataset Statistics for: {self.selected_dataset.name}\n"
+            stats_text += "=" * 50 + "\n\n"
+            stats_text += f"File Path: {self.selected_dataset.file_path}\n"
+            stats_text += f"File Format: {self.selected_dataset.file_format}\n"
+            
+            if self.selected_dataset.file_size:
+                stats_text += f"File Size: {self.selected_dataset.file_size:,} bytes\n"
+            
+            stats_text += f"Import Date: {self.selected_dataset.import_date}\n\n"
+            
+            # Get processing job count
+            try:
+                jobs = ProcessingJobOperations.list_jobs_for_dataset(self.selected_dataset.id)
+                stats_text += f"Processing Jobs: {len(jobs)}\n"
+                
+                completed_jobs = [j for j in jobs if j.status == 'completed']
+                stats_text += f"Completed Jobs: {len(completed_jobs)}\n"
+                
+                figures = FigureOperations.list_figures_for_dataset(self.selected_dataset.id)
+                stats_text += f"Generated Figures: {len(figures)}\n"
+                
+            except Exception as e:
+                stats_text += f"Error loading statistics: {e}\n"
+            
+            stats_text += "\n[Data preview functionality will be implemented in future updates]"
+            
+            self.stats_text.insert(1.0, stats_text)
+        
+        self.stats_text.config(state=tk.DISABLED)
+    
+    # Action methods
+    def open_dataset_file(self):
+        """Open the selected dataset file."""
+        if not self.selected_dataset:
+            messagebox.showwarning("No Selection", "Please select a dataset first.")
+            return
+        
+        file_path = self.selected_dataset.file_path
+        if not os.path.exists(file_path):
+            messagebox.showerror("File Not Found", f"File not found: {file_path}")
+            return
+        
+        try:
+            if platform.system() == 'Windows':
+                os.startfile(file_path)
+            elif platform.system() == 'Darwin':  # macOS
+                subprocess.call(['open', file_path])
+            else:  # Linux
+                subprocess.call(['xdg-open', file_path])
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open file: {str(e)}")
+    
+    def open_file_location(self):
+        """Open the file location in file explorer."""
+        if not self.selected_dataset:
+            messagebox.showwarning("No Selection", "Please select a dataset first.")
+            return
+        
+        file_path = self.selected_dataset.file_path
+        directory = os.path.dirname(file_path)
+        
+        if not os.path.exists(directory):
+            messagebox.showerror("Directory Not Found", f"Directory not found: {directory}")
+            return
+        
+        try:
+            if platform.system() == 'Windows':
+                subprocess.call(['explorer', '/select,', file_path])
+            elif platform.system() == 'Darwin':  # macOS
+                subprocess.call(['open', '-R', file_path])
+            else:  # Linux
+                subprocess.call(['xdg-open', directory])
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open file location: {str(e)}")
+    
+    def copy_file_path(self):
+        """Copy file path to clipboard."""
+        if not self.selected_dataset:
+            messagebox.showwarning("No Selection", "Please select a dataset first.")
+            return
+        
+        self.window.clipboard_clear()
+        self.window.clipboard_append(self.selected_dataset.file_path)
+        messagebox.showinfo("Copied", f"File path copied to clipboard:\n{self.selected_dataset.file_path}")
+    
+    def edit_dataset(self):
+        """Edit dataset information."""
+        if not self.selected_dataset:
+            messagebox.showwarning("No Selection", "Please select a dataset first.")
+            return
+        
+        # Create edit dialog
+        edit_window = tk.Toplevel(self.window)
+        edit_window.title("Edit Dataset")
+        edit_window.geometry("500x400")
+        edit_window.transient(self.window)
+        edit_window.grab_set()
+        
+        # Name field
+        ttk.Label(edit_window, text="Name:").grid(row=0, column=0, sticky="w", padx=10, pady=5)
+        name_var = tk.StringVar(value=self.selected_dataset.name)
+        name_entry = ttk.Entry(edit_window, textvariable=name_var, width=50)
+        name_entry.grid(row=0, column=1, padx=10, pady=5)
+        
+        # Description field
+        ttk.Label(edit_window, text="Description:").grid(row=1, column=0, sticky="nw", padx=10, pady=5)
+        desc_text = tk.Text(edit_window, width=50, height=8)
+        desc_text.grid(row=1, column=1, padx=10, pady=5)
+        desc_text.insert(1.0, self.selected_dataset.description or "")
+        
+        # Buttons
+        button_frame = ttk.Frame(edit_window)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=20)
+        
+        def save_changes():
+            new_name = name_var.get().strip()
+            new_description = desc_text.get(1.0, tk.END).strip()
+            
+            if not new_name:
+                messagebox.showerror("Error", "Name cannot be empty")
+                return
+            
+            try:
+                success = DatasetOperations.update_dataset(
+                    self.selected_dataset.id,
+                    name=new_name,
+                    description=new_description
+                )
+                
+                if success:
+                    messagebox.showinfo("Success", "Dataset updated successfully")
+                    edit_window.destroy()
+                    self.load_datasets()  # Reload to show changes
+                else:
+                    messagebox.showerror("Error", "Failed to update dataset")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to update dataset: {str(e)}")
+        
+        ttk.Button(button_frame, text="Save", command=save_changes).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Cancel", command=edit_window.destroy).pack(side="left", padx=5)
+    
+    def delete_dataset(self):
+        """Delete the selected dataset."""
+        if not self.selected_dataset:
+            messagebox.showwarning("No Selection", "Please select a dataset first.")
+            return
+        
+        # Confirmation dialog
+        result = messagebox.askyesno(
+            "Confirm Delete",
+            f"Are you sure you want to delete dataset '{self.selected_dataset.name}'?\n\n"
+            "This will also delete all associated processing jobs and figures.\n"
+            "This action cannot be undone."
+        )
+        
+        if result:
+            try:
+                success = DatasetOperations.delete_dataset(self.selected_dataset.id)
+                if success:
+                    messagebox.showinfo("Success", "Dataset deleted successfully")
+                    self.selected_dataset = None
+                    self.load_datasets()  # Reload list
+                    # Clear details panel
+                    for label in self.info_labels.values():
+                        label.config(text="")
+                else:
+                    messagebox.showerror("Error", "Failed to delete dataset")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to delete dataset: {str(e)}")
+    
+    def preview_data(self):
+        """Preview dataset data."""
+        if not self.selected_dataset:
+            messagebox.showwarning("No Selection", "Please select a dataset first.")
+            return
+        
+        file_path = self.selected_dataset.file_path
+        if not os.path.exists(file_path):
+            messagebox.showerror("File Not Found", f"File not found: {file_path}")
+            return
+        
+        # Create preview window
+        preview_window = tk.Toplevel(self.window)
+        preview_window.title(f"Data Preview - {self.selected_dataset.name}")
+        preview_window.geometry("1000x700")
+        preview_window.transient(self.window)
+        
+        # Create notebook for different preview modes
+        preview_notebook = ttk.Notebook(preview_window)
+        preview_notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        try:
+            # Load and preview the data
+            self.create_data_preview_tabs(preview_notebook, file_path)
+        except Exception as e:
+            messagebox.showerror("Preview Error", f"Failed to preview data: {str(e)}")
+            preview_window.destroy()
+    
+    def get_full_file_statistics(self):
+        """Calculate statistics for the complete file."""
+        if not self.selected_dataset:
+            return None
+        
+        file_path = self.selected_dataset.file_path
+        if not os.path.exists(file_path):
+            return "File not found"
+        
+        try:
+            # Import the full data using our importers
+            from src.data_processing.importers import DataImportManager
+            import pandas as pd
+            
+            import_manager = DataImportManager()
+            
+            # Import the complete file (no row limit)
+            result = import_manager.import_file(file_path)
+            
+            if not result['success']:
+                return f"Error loading full file: {result['message']}"
+            
+            full_data = result['data']
+            
+            if not hasattr(full_data, 'shape'):
+                return f"Full file loaded but not in tabular format\nData type: {type(full_data).__name__}"
+            
+            # Generate comprehensive statistics
+            stats_text = ""
+            
+            # Basic shape information
+            stats_text += f"Complete File Shape: {full_data.shape}\n"
+            stats_text += f"Total Columns: {len(full_data.columns)}\n"
+            stats_text += f"Total Rows: {len(full_data)}\n"
+            stats_text += f"Memory Usage: {full_data.memory_usage(deep=True).sum() / (1024*1024):.2f} MB\n\n"
+            
+            # Data types summary
+            dtype_counts = full_data.dtypes.value_counts()
+            stats_text += "Data Types Summary:\n" + "-"*25 + "\n"
+            for dtype, count in dtype_counts.items():
+                stats_text += f"{dtype}: {count} columns\n"
+            stats_text += "\n"
+            
+            # Missing values analysis
+            missing_total = full_data.isnull().sum().sum()
+            if missing_total > 0:
+                stats_text += f"Missing Values: {missing_total:,} total ({missing_total/(len(full_data)*len(full_data.columns))*100:.2f}% of all cells)\n"
+                missing_by_col = full_data.isnull().sum()
+                cols_with_missing = missing_by_col[missing_by_col > 0]
+                if len(cols_with_missing) <= 20:  # Show details if not too many columns
+                    stats_text += "Columns with missing values:\n"
+                    for col, count in cols_with_missing.items():
+                        stats_text += f"  {col}: {count:,} ({count/len(full_data)*100:.1f}%)\n"
+                else:
+                    stats_text += f"Missing values found in {len(cols_with_missing)} columns\n"
+                stats_text += "\n"
+            else:
+                stats_text += "Missing Values: None\n\n"
+            
+            # Numeric columns analysis
+            numeric_cols = full_data.select_dtypes(include=['number']).columns
+            if len(numeric_cols) > 0:
+                stats_text += f"Numeric Columns: {len(numeric_cols)}\n"
+                if len(numeric_cols) <= 5:  # Show summary stats for few columns
+                    stats_text += "Numeric Summary (first 5 columns):\n"
+                    desc_stats = full_data[numeric_cols[:5]].describe()
+                    stats_text += desc_stats.to_string() + "\n\n"
+                else:
+                    # Just show basic stats for all numeric columns
+                    stats_text += f"Numeric columns range from {full_data[numeric_cols].min().min():.4f} to {full_data[numeric_cols].max().max():.4f}\n\n"
+            
+            # Categorical columns analysis  
+            cat_cols = full_data.select_dtypes(include=['object', 'category']).columns
+            if len(cat_cols) > 0:
+                stats_text += f"Categorical/Text Columns: {len(cat_cols)}\n"
+                if len(cat_cols) <= 10:
+                    for col in cat_cols[:10]:
+                        unique_count = full_data[col].nunique()
+                        stats_text += f"  {col}: {unique_count:,} unique values\n"
+                    if len(cat_cols) > 10:
+                        stats_text += f"  ... and {len(cat_cols) - 10} more categorical columns\n"
+                else:
+                    total_unique = sum(full_data[col].nunique() for col in cat_cols)
+                    stats_text += f"Average unique values per categorical column: {total_unique/len(cat_cols):.1f}\n"
+                stats_text += "\n"
+            
+            # File size vs memory usage
+            file_size_mb = os.path.getsize(file_path) / (1024*1024)
+            memory_mb = full_data.memory_usage(deep=True).sum() / (1024*1024)
+            stats_text += f"File Size: {file_size_mb:.2f} MB\n"
+            stats_text += f"Memory Usage: {memory_mb:.2f} MB\n"
+            stats_text += f"Compression Ratio: {file_size_mb/memory_mb:.2f}x\n\n"
+            
+            return stats_text
+            
+        except Exception as e:
+            return f"Error calculating full file statistics: {str(e)}"
+    
+    def create_data_preview_tabs(self, notebook, file_path):
+        """Create different tabs for data preview."""
+        # Import the data using our importers
+        from src.data_processing.importers import DataImportManager
+        import pandas as pd
+        
+        import_manager = DataImportManager()
+        
+        # Preview with limited rows
+        result = import_manager.preview_file(file_path, max_rows=100)
+        
+        if not result['success']:
+            raise Exception(result['message'])
+        
+        data = result['data']
+        
+        # Tab 1: Data Table View
+        self.create_table_preview_tab(notebook, data)
+        
+        # Tab 2: Summary Statistics
+        self.create_statistics_preview_tab(notebook, data, result.get('statistics'))
+        
+        # Tab 3: Data Info
+        self.create_info_preview_tab(notebook, data, result)
+        
+        # Tab 4: Raw Data (for text files or first few lines)
+        self.create_raw_preview_tab(notebook, file_path)
+    
+    def create_table_preview_tab(self, notebook, data):
+        """Create table view tab for data preview."""
+        import pandas as pd
+        
+        table_frame = ttk.Frame(notebook)
+        notebook.add(table_frame, text="Data Table")
+        
+        # Info label with more detail
+        if hasattr(data, 'shape'):
+            info_text = f"Preview: Showing first {data.shape[0]} rows of dataset (limited for performance)"
+            if data.shape[0] == 100:
+                info_text += f"\nNote: Full dataset may contain more rows - see Statistics tab for complete file info"
+        else:
+            info_text = "Data preview (format may not support tabular display)"
+        
+        info_label = ttk.Label(table_frame, text=info_text, font=("Arial", 9, "italic"))
+        info_label.pack(pady=5)
+        
+        # Create frame for treeview and scrollbars
+        tree_frame = ttk.Frame(table_frame)
+        tree_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        if hasattr(data, 'columns') and hasattr(data, 'iloc'):
+            # DataFrame - create table view
+            columns = list(data.columns)
+            
+            # Create treeview with columns
+            tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=25)
+            
+            # Configure column headings and widths
+            for col in columns:
+                tree.heading(col, text=str(col))
+                tree.column(col, width=120, minwidth=80)
+            
+            # Add data rows
+            for i, row in data.iterrows():
+                values = []
+                for col in columns:
+                    val = row[col]
+                    # Format the value for display
+                    if pd.isna(val):
+                        val_str = "NaN"
+                    elif isinstance(val, float):
+                        val_str = f"{val:.4f}" if abs(val) < 1000 else f"{val:.2e}"
+                    else:
+                        val_str = str(val)
+                    
+                    # Truncate long strings
+                    if len(val_str) > 50:
+                        val_str = val_str[:47] + "..."
+                    
+                    values.append(val_str)
+                
+                tree.insert("", "end", values=values)
+            
+            # Add scrollbars
+            v_scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+            h_scrollbar = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
+            
+            tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+            
+            # Pack widgets
+            tree.pack(side="left", fill="both", expand=True)
+            v_scrollbar.pack(side="right", fill="y")
+            h_scrollbar.pack(side="bottom", fill="x")
+            
+        else:
+            # Not a DataFrame - show as text
+            text_widget = tk.Text(tree_frame, wrap=tk.WORD)
+            text_scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=text_widget.yview)
+            text_widget.configure(yscrollcommand=text_scrollbar.set)
+            
+            if isinstance(data, list):
+                # List data
+                for i, item in enumerate(data[:100]):
+                    text_widget.insert(tk.END, f"Row {i+1}: {str(item)}\n")
+            else:
+                # Other data types
+                text_widget.insert(tk.END, str(data))
+            
+            text_widget.pack(side="left", fill="both", expand=True)
+            text_scrollbar.pack(side="right", fill="y")
+            text_widget.config(state=tk.DISABLED)
+
+    def create_statistics_preview_tab(self, notebook, data, statistics):
+        """Create statistics preview tab with both preview and full file statistics."""
+        import pandas as pd
+        
+        stats_frame = ttk.Frame(notebook)
+        notebook.add(stats_frame, text="Statistics")
+        
+        # Create text widget for statistics
+        stats_text = tk.Text(stats_frame, wrap=tk.WORD, font=("Consolas", 10))
+        stats_scrollbar = ttk.Scrollbar(stats_frame, orient="vertical", command=stats_text.yview)
+        stats_text.configure(yscrollcommand=stats_scrollbar.set)
+        
+        stats_content = f"Dataset Statistics\n{'='*70}\n\n"
+        
+        # Section 1: Full File Statistics
+        stats_content += f"📊 FULL FILE STATISTICS\n{'='*50}\n"
+        try:
+            full_file_stats = self.get_full_file_statistics()
+            if full_file_stats:
+                stats_content += full_file_stats + "\n"
+            else:
+                stats_content += "Unable to calculate full file statistics.\n\n"
+        except Exception as e:
+            stats_content += f"Error calculating full file statistics: {str(e)}\n\n"
+        
+        # Section 2: Preview Data Statistics  
+        stats_content += f"🔍 PREVIEW DATA STATISTICS (First 100 rows shown in table)\n{'='*60}\n"
+        
+        if hasattr(data, 'describe'):
+            # DataFrame statistics
+            try:
+                # Basic info
+                stats_content += f"Preview Shape: {data.shape}\n"
+                stats_content += f"Preview Columns: {len(data.columns)}\n"
+                stats_content += f"Preview Rows: {len(data)}\n\n"
+                
+                # Data types
+                stats_content += "Data Types:\n" + "-"*20 + "\n"
+                for col, dtype in data.dtypes.items():
+                    stats_content += f"{col}: {dtype}\n"
+                stats_content += "\n"
+                
+                # Missing values in preview
+                missing = data.isnull().sum()
+                if missing.sum() > 0:
+                    stats_content += "Missing Values (in preview):\n" + "-"*30 + "\n"
+                    for col, count in missing.items():
+                        if count > 0:
+                            stats_content += f"{col}: {count} ({count/len(data)*100:.1f}%)\n"
+                    stats_content += "\n"
+                
+                # Descriptive statistics for numeric columns (preview only)
+                numeric_cols = data.select_dtypes(include=['number']).columns
+                if len(numeric_cols) > 0 and len(numeric_cols) <= 10:  # Only show if reasonable number of columns
+                    stats_content += "Descriptive Statistics - Preview Data (Numeric Columns):\n" + "-"*55 + "\n"
+                    desc_stats = data[numeric_cols].describe()
+                    stats_content += desc_stats.to_string() + "\n\n"
+                elif len(numeric_cols) > 10:
+                    stats_content += f"Descriptive Statistics: {len(numeric_cols)} numeric columns (too many to display)\n\n"
+                
+                # Categorical columns summary (preview only)
+                cat_cols = data.select_dtypes(include=['object', 'category']).columns
+                if len(cat_cols) > 0:
+                    stats_content += "Categorical Columns Summary - Preview Data:\n" + "-"*45 + "\n"
+                    for col in cat_cols[:5]:  # Limit to first 5 categorical columns
+                        unique_count = data[col].nunique()
+                        stats_content += f"{col}: {unique_count} unique values (in preview)\n"
+                        if unique_count <= 10:
+                            value_counts = data[col].value_counts().head(5)
+                            for val, count in value_counts.items():
+                                stats_content += f"  {val}: {count}\n"
+                        stats_content += "\n"
+                    
+                    if len(cat_cols) > 5:
+                        stats_content += f"... and {len(cat_cols) - 5} more categorical columns\n\n"
+                        
+            except Exception as e:
+                stats_content += f"Error generating preview statistics: {str(e)}\n"
+        
+        elif statistics:
+            # Use provided statistics
+            stats_content += "File Import Statistics:\n" + "-"*25 + "\n"
+            for key, value in statistics.items():
+                if isinstance(value, dict):
+                    stats_content += f"{key}:\n"
+                    for subkey, subvalue in value.items():
+                        stats_content += f"  {subkey}: {subvalue}\n"
+                else:
+                    stats_content += f"{key}: {value}\n"
+            stats_content += "\n"
+        
+        else:
+            stats_content += "No preview statistics available for this data type.\n"
+        
+        stats_text.insert(1.0, stats_content)
+        stats_text.config(state=tk.DISABLED)
+        
+        stats_text.pack(side="left", fill="both", expand=True)
+        stats_scrollbar.pack(side="right", fill="y")
+    
+    def create_info_preview_tab(self, notebook, data, result):
+        """Create info preview tab."""
+        info_frame = ttk.Frame(notebook)
+        notebook.add(info_frame, text="Data Info")
+        
+        info_text = tk.Text(info_frame, wrap=tk.WORD, font=("Consolas", 10))
+        info_scrollbar = ttk.Scrollbar(info_frame, orient="vertical", command=info_text.yview)
+        info_text.configure(yscrollcommand=info_scrollbar.set)
+        
+        info_content = f"Data Import Information\n{'='*50}\n\n"
+        
+        # Import result information
+        info_content += f"Preview Import Status: {'Success' if result['success'] else 'Failed'}\n"
+        info_content += f"Message: {result.get('message', 'N/A')}\n\n"
+        
+        # File information
+        file_path = self.selected_dataset.file_path
+        info_content += f"File Information:\n{'-'*20}\n"
+        info_content += f"Path: {file_path}\n"
+        info_content += f"Size: {os.path.getsize(file_path):,} bytes ({os.path.getsize(file_path)/(1024*1024):.2f} MB)\n"
+        info_content += f"Modified: {datetime.fromtimestamp(os.path.getmtime(file_path))}\n\n"
+        
+        # Data structure info
+        if hasattr(data, 'shape'):
+            info_content += f"Preview Data Structure (First 100 rows):\n{'-'*40}\n"
+            info_content += f"Type: {type(data).__name__}\n"
+            info_content += f"Preview Shape: {data.shape}\n"
+            info_content += f"Preview Memory Usage: {data.memory_usage(deep=True).sum() / 1024:.2f} KB\n\n"
+        
+        # Metadata from database
+        if self.selected_dataset.metadata:
+            info_content += f"Stored Metadata:\n{'-'*20}\n"
+            import json
+            try:
+                formatted_metadata = json.dumps(self.selected_dataset.metadata, indent=2)
+                info_content += formatted_metadata + "\n\n"
+            except:
+                info_content += str(self.selected_dataset.metadata) + "\n\n"
+        
+        # Sample of data structure
+        if hasattr(data, 'dtypes'):
+            info_content += f"Column Information:\n{'-'*20}\n"
+            for i, (col, dtype) in enumerate(data.dtypes.items()):
+                sample_values = data[col].dropna().head(3).tolist()
+                sample_str = ", ".join([str(v)[:20] for v in sample_values])
+                info_content += f"{i+1:2d}. {col} ({dtype}): {sample_str}...\n"
+        
+        info_text.insert(1.0, info_content)
+        info_text.config(state=tk.DISABLED)
+        
+        info_text.pack(side="left", fill="both", expand=True)
+        info_scrollbar.pack(side="right", fill="y")
+    
+    def create_raw_preview_tab(self, notebook, file_path):
+        """Create raw file preview tab."""
+        raw_frame = ttk.Frame(notebook)
+        notebook.add(raw_frame, text="Raw Data")
+        
+        # Info label
+        info_label = ttk.Label(raw_frame, 
+                              text="Showing first 50 lines of raw file", 
+                              font=("Arial", 9, "italic"))
+        info_label.pack(pady=5)
+        
+        raw_text = tk.Text(raw_frame, wrap=tk.NONE, font=("Consolas", 9))
+        
+        # Add scrollbars
+        v_scrollbar = ttk.Scrollbar(raw_frame, orient="vertical", command=raw_text.yview)
+        h_scrollbar = ttk.Scrollbar(raw_frame, orient="horizontal", command=raw_text.xview)
+        raw_text.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        
+        try:
+            # Read first 50 lines of the file
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = []
+                for i, line in enumerate(f):
+                    if i >= 50:  # Limit to first 50 lines
+                        break
+                    lines.append(f"{i+1:3d}: {line.rstrip()}")
+                
+                raw_content = "\n".join(lines)
+                if i >= 49:  # If we hit the limit
+                    raw_content += f"\n\n... (showing first 50 lines only)"
+                
+                raw_text.insert(1.0, raw_content)
+                
+        except UnicodeDecodeError:
+            # Try with different encoding
+            try:
+                with open(file_path, 'r', encoding='latin-1') as f:
+                    lines = []
+                    for i, line in enumerate(f):
+                        if i >= 50:
+                            break
+                        lines.append(f"{i+1:3d}: {line.rstrip()}")
+                    
+                    raw_content = "\n".join(lines)
+                    if i >= 49:
+                        raw_content += f"\n\n... (showing first 50 lines only)"
+                    
+                    raw_text.insert(1.0, raw_content)
+            except:
+                raw_text.insert(1.0, "Unable to preview file - may be binary or use unsupported encoding")
+        except Exception as e:
+            raw_text.insert(1.0, f"Error reading file: {str(e)}")
+        
+        raw_text.config(state=tk.DISABLED)
+        
+        # Pack widgets
+        raw_text.pack(side="left", fill="both", expand=True)
+        v_scrollbar.pack(side="right", fill="y")
+        h_scrollbar.pack(side="bottom", fill="x")
+
+    def view_job_details(self):
+        """View processing job details."""
+        messagebox.showinfo("Coming Soon", "Job details view will be implemented soon!")
+    
+    def open_job_output(self):
+        """Open job output file."""
+        messagebox.showinfo("Coming Soon", "Job output opening will be implemented soon!")
+    
+    def rerun_job(self):
+        """Rerun a processing job."""
+        messagebox.showinfo("Coming Soon", "Job rerun functionality will be implemented soon!")
+    
+    def open_figure(self):
+        """Open selected figure."""
+        selection = self.figures_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a figure first.")
+            return
+        
+        messagebox.showinfo("Coming Soon", "Figure opening will be implemented soon!")
+    
+    def copy_figure_path(self):
+        """Copy figure path to clipboard."""
+        messagebox.showinfo("Coming Soon", "Figure path copying will be implemented soon!")
+    
+    def export_figure(self):
+        """Export selected figure."""
+        messagebox.showinfo("Coming Soon", "Figure export will be implemented soon!")
+    
+    def edit_metadata(self):
+        """Edit dataset metadata."""
+        messagebox.showinfo("Coming Soon", "Metadata editing will be implemented soon!")
+    
+    def export_metadata(self):
+        """Export dataset metadata."""
+        messagebox.showinfo("Coming Soon", "Metadata export will be implemented soon!")
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.withdraw()  # Hide main window
+    app = DataBrowserGUI()
+    root.mainloop()

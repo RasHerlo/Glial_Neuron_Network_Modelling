@@ -1,0 +1,12 @@
+include README.md
+include LICENSE
+include requirements.txt
+include environment.yml
+include TODO.md
+recursive-include src *.py
+recursive-include data .gitkeep
+recursive-include docs *.md *.rst
+recursive-include scripts *.py *.sh *.bat
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .DS_Store
