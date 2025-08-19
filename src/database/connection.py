@@ -9,7 +9,6 @@ from typing import Optional
 from contextlib import contextmanager
 import json
 from datetime import datetime
-
 from .models import DatabaseSchema
 
 

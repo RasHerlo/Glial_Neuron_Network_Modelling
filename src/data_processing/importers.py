@@ -65,6 +65,10 @@ class CSVImporter(BaseImporter):
                 'encoding': 'utf-8'
             }
             
+            # Extract advanced import settings before updating params
+            convert_numeric = kwargs.pop('convert_numeric', False)
+            handle_errors = kwargs.pop('handle_errors', 'coerce')
+            
             # Handle advanced import settings
             if 'skip_rows' in kwargs:
                 params['skiprows'] = kwargs.pop('skip_rows')
@@ -78,11 +82,10 @@ class CSVImporter(BaseImporter):
             data = pd.read_csv(file_path, **params)
             
             # Handle numeric conversion if requested
-            if kwargs.get('convert_numeric', False):
-                convert_errors = kwargs.get('handle_errors', 'coerce')
+            if convert_numeric:
                 for col in data.columns:
                     if data[col].dtype == 'object':  # Text columns
-                        if convert_errors == 'coerce':
+                        if handle_errors == 'coerce':
                             # Convert to numeric, errors become NaN
                             numeric_version = pd.to_numeric(data[col], errors='coerce')
                             # Only replace if we successfully converted most values
@@ -393,8 +396,14 @@ class DataImportManager:
             formats.extend(importer.supported_formats)
         return sorted(list(set(formats)))
     
-    def preview_file(self, file_path: str, max_rows: int = 10) -> Dict[str, Any]:
-        """Preview file content without full import."""
+    def preview_file(self, file_path: str, max_rows: int = 10, **import_settings) -> Dict[str, Any]:
+        """Preview file content without full import.
+        
+        Args:
+            file_path: Path to the file to preview
+            max_rows: Maximum number of rows to preview
+            **import_settings: Import settings to apply (skip_rows, header_row, etc.)
+        """
         importer = self.get_importer(file_path)
         if not importer:
             return {
@@ -402,15 +411,18 @@ class DataImportManager:
                 'message': f'No importer available for file: {file_path}'
             }
         
-        # For CSV and Excel, we can limit rows
+        # Prepare kwargs with import settings and row limit
+        kwargs = dict(import_settings)  # Copy import settings
+        kwargs['nrows'] = max_rows  # Add row limit for preview
+        
+        # For CSV and Excel, we can limit rows and apply import settings
         if isinstance(importer, (CSVImporter, ExcelImporter)):
-            if isinstance(importer, CSVImporter):
-                result = importer.import_file(file_path, nrows=max_rows)
-            else:  # ExcelImporter
-                result = importer.import_file(file_path, nrows=max_rows)
+            result = importer.import_file(file_path, **kwargs)
         else:
             # For other formats, import full file but limit display
-            result = importer.import_file(file_path)
+            # Remove nrows for formats that don't support it
+            other_kwargs = {k: v for k, v in import_settings.items() if k != 'nrows'}
+            result = importer.import_file(file_path, **other_kwargs)
             if result['success'] and hasattr(result['data'], 'head'):
                 result['data'] = result['data'].head(max_rows)
         
