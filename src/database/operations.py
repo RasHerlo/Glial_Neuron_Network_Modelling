@@ -19,8 +19,11 @@ class DatasetOperations:
         """Create a new dataset record."""
         db = get_database()
         
+        # Ensure file path is absolute
+        abs_file_path = os.path.abspath(file_path)
+        
         # Get file size if file exists
-        file_size = os.path.getsize(file_path) if os.path.exists(file_path) else None
+        file_size = os.path.getsize(abs_file_path) if os.path.exists(abs_file_path) else None
         
         query = """
             INSERT INTO datasets (name, file_path, file_size, file_format, description, metadata)
@@ -28,7 +31,7 @@ class DatasetOperations:
         """
         
         return db.execute_insert(query, (
-            name, file_path, file_size, file_format, description, metadata or {}
+            name, abs_file_path, file_size, file_format, description, metadata or {}
         ))
     
     @staticmethod
@@ -110,9 +113,33 @@ class DatasetOperations:
         return db.execute_update(query, tuple(params)) > 0
     
     @staticmethod
-    def delete_dataset(dataset_id: int) -> bool:
-        """Delete a dataset (cascades to related records)."""
+    def delete_dataset(dataset_id: int, delete_file: bool = False) -> bool:
+        """Delete a dataset (cascades to related records).
+        
+        Args:
+            dataset_id: ID of the dataset to delete
+            delete_file: If True, also delete the physical file
+            
+        Returns:
+            bool: True if deletion was successful
+        """
         db = get_database()
+        
+        # Get the dataset info before deleting (to get file path)
+        if delete_file:
+            dataset = DatasetOperations.get_dataset(dataset_id)
+            if dataset and dataset.file_path:
+                file_path = dataset.file_path
+                # Only delete files that exist and are absolute paths
+                if os.path.exists(file_path) and os.path.isabs(file_path):
+                    try:
+                        os.remove(file_path)
+                        print(f"Deleted file: {file_path}")
+                    except OSError as e:
+                        print(f"Warning: Could not delete file {file_path}: {e}")
+                        # Continue with database deletion even if file deletion fails
+        
+        # Delete from database
         query = "DELETE FROM datasets WHERE id = ?"
         return db.execute_update(query, (dataset_id,)) > 0
     

@@ -20,7 +20,9 @@ class DataImportGUI:
     def __init__(self):
         self.window = tk.Toplevel()
         self.window.title("Data Import")
-        self.window.geometry("700x500")
+        self.window.geometry("700x780")
+        self.window.minsize(700, 750)
+        self.window.resizable(True, True)
         self.window.configure(bg='#f0f0f0')
         
         self.selected_files = []
@@ -686,8 +688,12 @@ class DataImportGUI:
                     if not os.path.exists(final_path) or os.path.getsize(file_path) != os.path.getsize(final_path):
                         import shutil
                         shutil.copy2(file_path, final_path)
+                    
+                    # Convert to absolute path to ensure 'Open File Location' works
+                    final_path = os.path.abspath(final_path)
                 else:
-                    final_path = file_path
+                    # Ensure original path is also absolute
+                    final_path = os.path.abspath(file_path)
                 
                 # Test import with advanced settings to validate
                 test_result = self.import_with_settings(file_path, max_rows=5)

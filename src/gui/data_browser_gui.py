@@ -567,21 +567,40 @@ class DataBrowserGUI:
             return
         
         file_path = self.selected_dataset.file_path
+        
+        # Convert to absolute path if it's not already
+        if not os.path.isabs(file_path):
+            file_path = os.path.abspath(file_path)
+        
         directory = os.path.dirname(file_path)
         
+        # Check if file exists first
+        if not os.path.exists(file_path):
+            messagebox.showerror("File Not Found", 
+                               f"File not found:\n{file_path}\n\n"
+                               f"The file may have been moved or deleted.")
+            return
+        
+        # Check if directory exists
         if not os.path.exists(directory):
-            messagebox.showerror("Directory Not Found", f"Directory not found: {directory}")
+            messagebox.showerror("Directory Not Found", 
+                               f"Directory not found:\n{directory}\n\n"
+                               f"The directory may have been moved or deleted.")
             return
         
         try:
             if platform.system() == 'Windows':
+                # Use the absolute file path for Windows Explorer
                 subprocess.call(['explorer', '/select,', file_path])
             elif platform.system() == 'Darwin':  # macOS
                 subprocess.call(['open', '-R', file_path])
             else:  # Linux
                 subprocess.call(['xdg-open', directory])
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to open file location: {str(e)}")
+            messagebox.showerror("Error", 
+                               f"Failed to open file location:\n{str(e)}\n\n"
+                               f"File path: {file_path}\n"
+                               f"Directory: {directory}")
     
     def copy_file_path(self):
         """Copy file path to clipboard."""
@@ -655,28 +674,75 @@ class DataBrowserGUI:
             messagebox.showwarning("No Selection", "Please select a dataset first.")
             return
         
-        # Confirmation dialog
-        result = messagebox.askyesno(
-            "Confirm Delete",
-            f"Are you sure you want to delete dataset '{self.selected_dataset.name}'?\n\n"
-            "This will also delete all associated processing jobs and figures.\n"
-            "This action cannot be undone."
-        )
+        file_path = self.selected_dataset.file_path
+        dataset_name = self.selected_dataset.name
         
-        if result:
-            try:
-                success = DatasetOperations.delete_dataset(self.selected_dataset.id)
-                if success:
-                    messagebox.showinfo("Success", "Dataset deleted successfully")
-                    self.selected_dataset = None
-                    self.load_datasets()  # Reload list
-                    # Clear details panel
-                    for label in self.info_labels.values():
-                        label.config(text="")
-                else:
-                    messagebox.showerror("Error", "Failed to delete dataset")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to delete dataset: {str(e)}")
+        # Determine if this is a copied file (in data/raw directory)
+        data_raw_path = os.path.abspath("data/raw")
+        is_copied_file = file_path and file_path.startswith(data_raw_path)
+        
+        # Enhanced confirmation dialog
+        if is_copied_file:
+            # For copied files, offer choice to delete physical file
+            dialog_text = (
+                f"Delete dataset '{dataset_name}'?\n\n"
+                f"This will delete:\n"
+                f"• Dataset record from database\n"
+                f"• All associated processing jobs and figures\n\n"
+                f"The dataset file is a copy in your project:\n"
+                f"{os.path.basename(file_path)}\n\n"
+                f"Do you also want to delete the physical file?\n\n"
+                f"YES = Delete database record AND file\n"
+                f"NO = Delete database record only (keep file)\n"
+                f"CANCEL = Don't delete anything"
+            )
+            
+            # Create custom dialog with Yes/No/Cancel
+            result = messagebox.askyesnocancel("Confirm Delete", dialog_text)
+            
+            if result is None:  # Cancel
+                return
+            elif result is True:  # Yes - delete both
+                delete_file = True
+                action_description = "Dataset and file deleted successfully"
+            else:  # No - delete database only
+                delete_file = False
+                action_description = "Dataset deleted successfully (file kept)"
+                
+        else:
+            # For original files, only ask about database deletion
+            dialog_text = (
+                f"Delete dataset '{dataset_name}'?\n\n"
+                f"This will delete:\n"
+                f"• Dataset record from database\n"
+                f"• All associated processing jobs and figures\n\n"
+                f"The original file will NOT be deleted:\n"
+                f"{file_path}\n\n"
+                f"This action cannot be undone."
+            )
+            
+            result = messagebox.askyesno("Confirm Delete", dialog_text)
+            
+            if not result:
+                return
+            
+            delete_file = False
+            action_description = "Dataset deleted successfully (original file kept)"
+        
+        # Perform the deletion
+        try:
+            success = DatasetOperations.delete_dataset(self.selected_dataset.id, delete_file=delete_file)
+            if success:
+                messagebox.showinfo("Success", action_description)
+                self.selected_dataset = None
+                self.load_datasets()  # Reload list
+                # Clear details panel
+                for label in self.info_labels.values():
+                    label.config(text="")
+            else:
+                messagebox.showerror("Error", "Failed to delete dataset")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete dataset: {str(e)}")
     
     def preview_data(self):
         """Preview dataset data."""
