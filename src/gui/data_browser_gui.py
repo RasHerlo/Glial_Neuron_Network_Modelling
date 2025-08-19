@@ -14,8 +14,9 @@ import platform
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from src.database.operations import DatasetOperations, ProcessingJobOperations, FigureOperations
+from src.database.operations import DatasetOperations, ProcessingJobOperations, FigureOperations, ProcessedDataOperations
 from src.database.models import Dataset
+from src.utils.folder_manager import DatasetFolderManager
 
 
 class DataBrowserGUI:
@@ -140,6 +141,9 @@ class DataBrowserGUI:
         # Processing history tab
         self.create_processing_history_tab()
         
+        # Processed data tab
+        self.create_processed_data_tab()
+        
         # Figures tab
         self.create_figures_tab()
         
@@ -238,6 +242,48 @@ class DataBrowserGUI:
                   command=self.open_job_output).pack(side="left", padx=5)
         ttk.Button(job_actions_frame, text="Rerun Job", 
                   command=self.rerun_job).pack(side="left", padx=5)
+    
+    def create_processed_data_tab(self):
+        """Create the processed data tab."""
+        processed_frame = ttk.Frame(self.details_notebook)
+        self.details_notebook.add(processed_frame, text="Processed Data")
+        
+        # Processed data list
+        data_frame = ttk.LabelFrame(processed_frame, text="Processed Data", padding=5)
+        data_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Processed data treeview
+        data_columns = ("data_name", "data_type", "file_size", "created_at")
+        self.processed_data_tree = ttk.Treeview(data_frame, columns=data_columns, show="headings", height=15)
+        
+        # Configure processed data columns
+        self.processed_data_tree.heading("data_name", text="Data Name")
+        self.processed_data_tree.heading("data_type", text="Type")
+        self.processed_data_tree.heading("file_size", text="Size")
+        self.processed_data_tree.heading("created_at", text="Created")
+        
+        self.processed_data_tree.column("data_name", width=200)
+        self.processed_data_tree.column("data_type", width=100)
+        self.processed_data_tree.column("file_size", width=80)
+        self.processed_data_tree.column("created_at", width=130)
+        
+        # Processed data scrollbar
+        data_scrollbar = ttk.Scrollbar(data_frame, orient="vertical", command=self.processed_data_tree.yview)
+        self.processed_data_tree.configure(yscrollcommand=data_scrollbar.set)
+        
+        self.processed_data_tree.pack(side="left", fill="both", expand=True)
+        data_scrollbar.pack(side="right", fill="y")
+        
+        # Processed data actions frame
+        data_actions_frame = ttk.Frame(processed_frame)
+        data_actions_frame.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Button(data_actions_frame, text="Open File Location", 
+                  command=self.open_processed_data_location).pack(side="left", padx=5)
+        ttk.Button(data_actions_frame, text="View Data Info", 
+                  command=self.view_processed_data_info).pack(side="left", padx=5)
+        ttk.Button(data_actions_frame, text="Delete Processed Data", 
+                  command=self.delete_processed_data).pack(side="left", padx=5)
     
     def create_figures_tab(self):
         """Create the figures tab."""
@@ -431,6 +477,9 @@ class DataBrowserGUI:
         # Update processing history
         self.update_processing_history()
         
+        # Update processed data
+        self.update_processed_data_list()
+        
         # Update figures
         self.update_figures_list()
         
@@ -462,6 +511,39 @@ class DataBrowserGUI:
                 
         except Exception as e:
             print(f"Error loading processing history: {e}")
+    
+    def update_processed_data_list(self):
+        """Update the processed data list."""
+        # Clear existing items
+        for item in self.processed_data_tree.get_children():
+            self.processed_data_tree.delete(item)
+        
+        if not self.selected_dataset:
+            return
+        
+        try:
+            processed_data = ProcessedDataOperations.list_processed_data_for_dataset(self.selected_dataset.id)
+            
+            for data in processed_data:
+                # Format file size
+                if data.file_size:
+                    if data.file_size > 1024*1024:
+                        size_str = f"{data.file_size / (1024*1024):.1f} MB"
+                    elif data.file_size > 1024:
+                        size_str = f"{data.file_size / 1024:.1f} KB"
+                    else:
+                        size_str = f"{data.file_size} B"
+                else:
+                    size_str = "Unknown"
+                
+                # Format creation date
+                created_str = data.created_at.strftime("%Y-%m-%d %H:%M") if data.created_at else "Unknown"
+                
+                self.processed_data_tree.insert("", "end", text=str(data.id),
+                                               values=(data.data_name, data.data_type, size_str, created_str))
+                
+        except Exception as e:
+            print(f"Error loading processed data: {e}")
     
     def update_figures_list(self):
         """Update the figures list."""
@@ -1263,6 +1345,138 @@ class DataBrowserGUI:
     def export_metadata(self):
         """Export dataset metadata."""
         messagebox.showinfo("Coming Soon", "Metadata export will be implemented soon!")
+    
+    # Processed data action methods
+    def open_processed_data_location(self):
+        """Open the location of selected processed data."""
+        selection = self.processed_data_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select processed data first.")
+            return
+        
+        try:
+            item = self.processed_data_tree.item(selection[0])
+            processed_data_id = int(item['text'])
+            
+            processed_data = ProcessedDataOperations.get_processed_data(processed_data_id)
+            if not processed_data:
+                messagebox.showerror("Error", "Processed data not found.")
+                return
+            
+            file_path = processed_data.file_path
+            directory = os.path.dirname(file_path)
+            
+            if not os.path.exists(directory):
+                messagebox.showerror("Directory Not Found", 
+                                   f"Directory not found:\n{directory}")
+                return
+            
+            if platform.system() == 'Windows':
+                subprocess.call(['explorer', '/select,', file_path])
+            elif platform.system() == 'Darwin':  # macOS
+                subprocess.call(['open', '-R', file_path])
+            else:  # Linux
+                subprocess.call(['xdg-open', directory])
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open location: {str(e)}")
+    
+    def view_processed_data_info(self):
+        """View information about selected processed data."""
+        selection = self.processed_data_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select processed data first.")
+            return
+        
+        try:
+            item = self.processed_data_tree.item(selection[0])
+            processed_data_id = int(item['text'])
+            
+            processed_data = ProcessedDataOperations.get_processed_data(processed_data_id)
+            if not processed_data:
+                messagebox.showerror("Error", "Processed data not found.")
+                return
+            
+            # Create info window
+            info_window = tk.Toplevel(self.window)
+            info_window.title(f"Processed Data Info - {processed_data.data_name}")
+            info_window.geometry("600x500")
+            info_window.transient(self.window)
+            
+            # Info text
+            info_text = tk.Text(info_window, wrap=tk.WORD, font=("Consolas", 10))
+            info_scrollbar = ttk.Scrollbar(info_window, orient="vertical", command=info_text.yview)
+            info_text.configure(yscrollcommand=info_scrollbar.set)
+            
+            # Format info content
+            info_content = f"Processed Data Information\n{'='*50}\n\n"
+            info_content += f"Data Name: {processed_data.data_name}\n"
+            info_content += f"Data Type: {processed_data.data_type}\n"
+            info_content += f"File Path: {processed_data.file_path}\n"
+            info_content += f"File Size: {processed_data.file_size or 'Unknown'} bytes\n"
+            info_content += f"Created: {processed_data.created_at or 'Unknown'}\n\n"
+            
+            if processed_data.parameters:
+                info_content += f"Processing Parameters:\n{'-'*30}\n"
+                import json
+                try:
+                    formatted_params = json.dumps(processed_data.parameters, indent=2)
+                    info_content += formatted_params
+                except:
+                    info_content += str(processed_data.parameters)
+            
+            info_text.insert(1.0, info_content)
+            info_text.config(state=tk.DISABLED)
+            
+            info_text.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+            info_scrollbar.pack(side="right", fill="y", pady=10)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to view info: {str(e)}")
+    
+    def delete_processed_data(self):
+        """Delete selected processed data."""
+        selection = self.processed_data_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select processed data first.")
+            return
+        
+        try:
+            item = self.processed_data_tree.item(selection[0])
+            processed_data_id = int(item['text'])
+            
+            processed_data = ProcessedDataOperations.get_processed_data(processed_data_id)
+            if not processed_data:
+                messagebox.showerror("Error", "Processed data not found.")
+                return
+            
+            # Confirmation dialog
+            result = messagebox.askyesnocancel(
+                "Confirm Delete",
+                f"Delete processed data '{processed_data.data_name}'?\n\n"
+                f"YES = Delete database record AND file\n"
+                f"NO = Delete database record only (keep file)\n"
+                f"CANCEL = Don't delete anything"
+            )
+            
+            if result is None:  # Cancel
+                return
+            elif result is True:  # Yes - delete both
+                delete_file = True
+                action_description = "Processed data and file deleted successfully"
+            else:  # No - delete database only
+                delete_file = False
+                action_description = "Processed data deleted successfully (file kept)"
+            
+            success = ProcessedDataOperations.delete_processed_data(processed_data_id, delete_file=delete_file)
+            if success:
+                messagebox.showinfo("Success", action_description)
+                self.update_processed_data_list()  # Refresh the list
+            else:
+                messagebox.showerror("Error", "Failed to delete processed data")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete processed data: {str(e)}")
 
 
 if __name__ == "__main__":

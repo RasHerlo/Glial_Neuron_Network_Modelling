@@ -7,7 +7,7 @@ from datetime import datetime
 import os
 
 from .connection import get_database
-from .models import Dataset, ProcessingJob, Figure
+from .models import Dataset, ProcessingJob, Figure, ProcessedData
 
 
 class DatasetOperations:
@@ -376,3 +376,121 @@ class UserPreferencesOperations:
         results = db.execute_query(query)
         
         return {row[0]: row[1] for row in results}
+
+
+class ProcessedDataOperations:
+    """Database operations for processed data."""
+    
+    @staticmethod
+    def create_processed_data(dataset_id: int, data_name: str, data_type: str,
+                             file_path: str, processing_job_id: int = None,
+                             parameters: Dict[str, Any] = None) -> int:
+        """Create a new processed data record."""
+        db = get_database()
+        
+        # Get file size if file exists
+        file_size = os.path.getsize(file_path) if os.path.exists(file_path) else None
+        
+        query = """
+            INSERT INTO processed_data (dataset_id, processing_job_id, data_name, data_type, 
+                                      file_path, parameters, file_size)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        
+        return db.execute_insert(query, (
+            dataset_id, processing_job_id, data_name, data_type, 
+            file_path, parameters or {}, file_size
+        ))
+    
+    @staticmethod
+    def get_processed_data(processed_data_id: int) -> Optional[ProcessedData]:
+        """Get processed data by ID."""
+        db = get_database()
+        query = "SELECT * FROM processed_data WHERE id = ?"
+        result = db.execute_one(query, (processed_data_id,))
+        
+        if result:
+            return ProcessedData(
+                id=result[0], dataset_id=result[1], processing_job_id=result[2],
+                data_name=result[3], data_type=result[4], file_path=result[5],
+                parameters=result[6] or {}, file_size=result[7],
+                created_at=datetime.fromisoformat(result[8]) if result[8] else None
+            )
+        return None
+    
+    @staticmethod
+    def list_processed_data_for_dataset(dataset_id: int) -> List[ProcessedData]:
+        """List all processed data for a specific dataset."""
+        db = get_database()
+        query = """
+            SELECT * FROM processed_data 
+            WHERE dataset_id = ? 
+            ORDER BY created_at DESC
+        """
+        results = db.execute_query(query, (dataset_id,))
+        
+        processed_data = []
+        for result in results:
+            processed_data.append(ProcessedData(
+                id=result[0], dataset_id=result[1], processing_job_id=result[2],
+                data_name=result[3], data_type=result[4], file_path=result[5],
+                parameters=result[6] or {}, file_size=result[7],
+                created_at=datetime.fromisoformat(result[8]) if result[8] else None
+            ))
+        
+        return processed_data
+    
+    @staticmethod
+    def list_processed_data_by_type(dataset_id: int, data_type: str) -> List[ProcessedData]:
+        """List processed data for a dataset filtered by type."""
+        db = get_database()
+        query = """
+            SELECT * FROM processed_data 
+            WHERE dataset_id = ? AND data_type = ? 
+            ORDER BY created_at DESC
+        """
+        results = db.execute_query(query, (dataset_id, data_type))
+        
+        processed_data = []
+        for result in results:
+            processed_data.append(ProcessedData(
+                id=result[0], dataset_id=result[1], processing_job_id=result[2],
+                data_name=result[3], data_type=result[4], file_path=result[5],
+                parameters=result[6] or {}, file_size=result[7],
+                created_at=datetime.fromisoformat(result[8]) if result[8] else None
+            ))
+        
+        return processed_data
+    
+    @staticmethod
+    def delete_processed_data(processed_data_id: int, delete_file: bool = False) -> bool:
+        """Delete processed data record and optionally the file."""
+        db = get_database()
+        
+        # Get the processed data info before deleting (to get file path)
+        if delete_file:
+            processed_data = ProcessedDataOperations.get_processed_data(processed_data_id)
+            if processed_data and processed_data.file_path:
+                file_path = processed_data.file_path
+                if os.path.exists(file_path) and os.path.isabs(file_path):
+                    try:
+                        os.remove(file_path)
+                        print(f"Deleted processed data file: {file_path}")
+                    except OSError as e:
+                        print(f"Warning: Could not delete file {file_path}: {e}")
+        
+        # Delete from database
+        query = "DELETE FROM processed_data WHERE id = ?"
+        return db.execute_update(query, (processed_data_id,)) > 0
+    
+    @staticmethod
+    def get_data_types_for_dataset(dataset_id: int) -> List[str]:
+        """Get all unique data types for a dataset."""
+        db = get_database()
+        query = """
+            SELECT DISTINCT data_type FROM processed_data 
+            WHERE dataset_id = ? 
+            ORDER BY data_type
+        """
+        results = db.execute_query(query, (dataset_id,))
+        return [row[0] for row in results]

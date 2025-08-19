@@ -66,6 +66,23 @@ class DatabaseSchema:
         """,
         
         """
+        CREATE TABLE IF NOT EXISTS processed_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dataset_id INTEGER NOT NULL,
+            processing_job_id INTEGER,
+            data_name TEXT NOT NULL,
+            data_type TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            parameters JSON,
+            file_size INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (dataset_id) REFERENCES datasets (id) ON DELETE CASCADE,
+            FOREIGN KEY (processing_job_id) REFERENCES processing_jobs (id) ON DELETE SET NULL
+        )
+        """,
+        
+        """
         CREATE TABLE IF NOT EXISTS analysis_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             processing_job_id INTEGER NOT NULL,
@@ -99,6 +116,9 @@ class DatabaseSchema:
         "CREATE INDEX IF NOT EXISTS idx_processing_jobs_start_time ON processing_jobs (start_time)",
         "CREATE INDEX IF NOT EXISTS idx_figures_dataset_id ON figures (dataset_id)",
         "CREATE INDEX IF NOT EXISTS idx_figures_processing_job_id ON figures (processing_job_id)",
+        "CREATE INDEX IF NOT EXISTS idx_processed_data_dataset_id ON processed_data (dataset_id)",
+        "CREATE INDEX IF NOT EXISTS idx_processed_data_processing_job_id ON processed_data (processing_job_id)",
+        "CREATE INDEX IF NOT EXISTS idx_processed_data_data_type ON processed_data (data_type)",
         "CREATE INDEX IF NOT EXISTS idx_analysis_results_processing_job_id ON analysis_results (processing_job_id)"
     ]
 
@@ -175,6 +195,39 @@ class ProcessingJob:
             'output_path': self.output_path,
             'error_message': self.error_message,
             'progress': self.progress
+        }
+
+
+class ProcessedData:
+    """Processed data model for database operations."""
+    
+    def __init__(self, id: Optional[int] = None, dataset_id: int = 0, 
+                 processing_job_id: Optional[int] = None, data_name: str = "",
+                 data_type: str = "", file_path: str = "",
+                 parameters: Optional[Dict[str, Any]] = None, file_size: Optional[int] = None,
+                 created_at: Optional[datetime] = None):
+        self.id = id
+        self.dataset_id = dataset_id
+        self.processing_job_id = processing_job_id
+        self.data_name = data_name
+        self.data_type = data_type
+        self.file_path = file_path
+        self.parameters = parameters or {}
+        self.file_size = file_size
+        self.created_at = created_at
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'id': self.id,
+            'dataset_id': self.dataset_id,
+            'processing_job_id': self.processing_job_id,
+            'data_name': self.data_name,
+            'data_type': self.data_type,
+            'file_path': self.file_path,
+            'parameters': self.parameters,
+            'file_size': self.file_size,
+            'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
 

@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from src.database.operations import DatasetOperations
+from src.utils.folder_manager import DatasetFolderManager
 
 
 class DataImportGUI:
@@ -677,14 +678,29 @@ class DataImportGUI:
                 self.progress_bar['value'] = (i / total_files) * 100
                 self.window.update()
                 
+                # Create dataset first to get ID for folder creation
+                temp_dataset_id = DatasetOperations.create_dataset(
+                    name=dataset_name if len(self.selected_files) == 1 else f"{dataset_name}_{i+1:03d}_{os.path.splitext(os.path.basename(file_path))[0]}",
+                    file_path="temp_path",  # Will be updated after file copy
+                    file_format=self.format_var.get(),
+                    description=self.description_text.get(1.0, tk.END).strip(),
+                    metadata={}  # Will be updated with import settings
+                )
+                
+                # Create dataset folder structure
+                folder_manager = DatasetFolderManager()
+                dataset_folder = folder_manager.create_dataset_folder(
+                    temp_dataset_id, 
+                    dataset_name if len(self.selected_files) == 1 else f"{dataset_name}_{i+1:03d}"
+                )
+                
                 # Determine final file path
                 if self.copy_files_var.get():
-                    # Copy to data/raw directory
-                    raw_dir = "data/raw"
-                    os.makedirs(raw_dir, exist_ok=True)
+                    # Copy to dataset's raw directory
+                    raw_dir = folder_manager.get_raw_data_path(dataset_folder)
                     final_path = os.path.join(raw_dir, os.path.basename(file_path))
                     
-                    # Copy file if it doesn't exist or is different
+                    # Copy file
                     if not os.path.exists(final_path) or os.path.getsize(file_path) != os.path.getsize(final_path):
                         import shutil
                         shutil.copy2(file_path, final_path)
@@ -692,7 +708,7 @@ class DataImportGUI:
                     # Convert to absolute path to ensure 'Open File Location' works
                     final_path = os.path.abspath(final_path)
                 else:
-                    # Ensure original path is also absolute
+                    # For original files, still use absolute path but store folder info in metadata
                     final_path = os.path.abspath(file_path)
                 
                 # Test import with advanced settings to validate
@@ -702,10 +718,12 @@ class DataImportGUI:
                                        f"Failed to import {os.path.basename(file_path)} with current settings:\n{test_result['message']}")
                     continue
                 
-                # Prepare metadata with import settings
+                # Prepare metadata with import settings and folder info
                 import_metadata = {
                     'import_source': file_path, 
                     'original_path': file_path,
+                    'dataset_folder': dataset_folder,
+                    'folder_structure': 'hybrid_v1',  # Version for future compatibility
                     'import_settings': {
                         'skip_rows': int(self.skip_rows_var.get()) if self.skip_rows_var.get().isdigit() else 0,
                         'header_row': int(self.header_row_var.get()) if self.header_row_var.get().isdigit() else 0,
@@ -715,30 +733,19 @@ class DataImportGUI:
                     'validation_result': test_result['statistics']
                 }
                 
-                # Create individual dataset record for each file (or combine them)
-                if len(self.selected_files) == 1:
-                    # Single file dataset
-                    dataset_id = DatasetOperations.create_dataset(
-                        name=dataset_name,
-                        file_path=final_path,
-                        file_format=self.format_var.get(),
-                        description=self.description_text.get(1.0, tk.END).strip(),
-                        metadata=import_metadata
-                    )
-                else:
-                    # Multiple files - create with indexed names
-                    indexed_name = f"{dataset_name}_{i+1:03d}_{os.path.splitext(os.path.basename(file_path))[0]}"
+                # Update the dataset with final file path and metadata
+                if len(self.selected_files) > 1:
                     import_metadata.update({
                         'batch_name': dataset_name,
                         'file_index': i+1
                     })
-                    dataset_id = DatasetOperations.create_dataset(
-                        name=indexed_name,
-                        file_path=final_path,
-                        file_format=self.format_var.get(),
-                        description=self.description_text.get(1.0, tk.END).strip(),
-                        metadata=import_metadata
-                    )
+                
+                # Update the temporary dataset with correct information
+                DatasetOperations.update_dataset(
+                    temp_dataset_id,
+                    file_path=final_path,
+                    metadata=import_metadata
+                )
             
             self.progress_var.set("Import completed successfully!")
             self.progress_bar['value'] = 100
