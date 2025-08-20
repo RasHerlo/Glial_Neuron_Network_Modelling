@@ -5,7 +5,7 @@ Folder management utilities for dataset organization.
 import os
 import re
 from pathlib import Path
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Dict
 
 
 class DatasetFolderManager:
@@ -16,19 +16,24 @@ class DatasetFolderManager:
         self.datasets_dir = self.base_data_dir / "datasets"
         self.shared_dir = self.base_data_dir / "shared"
     
-    def create_dataset_folder(self, dataset_id: int, dataset_name: str) -> str:
+    def create_dataset_folder(self, dataset_id: int, dataset_name: str, use_clean_names: bool = True) -> str:
         """Create a dataset folder structure and return the base path.
         
         Args:
-            dataset_id: Unique dataset ID
+            dataset_id: Unique dataset ID (used for legacy compatibility)
             dataset_name: Name of the dataset
+            use_clean_names: If True, use clean name only; if False, use legacy ID format
             
         Returns:
             str: Absolute path to the dataset folder
         """
         # Sanitize dataset name for folder use
         safe_name = self._sanitize_folder_name(dataset_name)
-        folder_name = f"dataset_{dataset_id:03d}_{safe_name}"
+        
+        if use_clean_names:
+            folder_name = safe_name  # New format: just the clean name
+        else:
+            folder_name = f"dataset_{dataset_id:03d}_{safe_name}"  # Legacy format
         
         dataset_path = self.datasets_dir / folder_name
         
@@ -43,7 +48,7 @@ class DatasetFolderManager:
         return str(dataset_path.absolute())
     
     def get_dataset_folder(self, dataset_id: int, dataset_name: str) -> Optional[str]:
-        """Get existing dataset folder path.
+        """Get existing dataset folder path (supports both old and new naming conventions).
         
         Args:
             dataset_id: Unique dataset ID
@@ -53,11 +58,18 @@ class DatasetFolderManager:
             str: Absolute path to dataset folder if exists, None otherwise
         """
         safe_name = self._sanitize_folder_name(dataset_name)
-        folder_name = f"dataset_{dataset_id:03d}_{safe_name}"
-        dataset_path = self.datasets_dir / folder_name
         
-        if dataset_path.exists():
-            return str(dataset_path.absolute())
+        # Try new format first (clean name only)
+        clean_path = self.datasets_dir / safe_name
+        if clean_path.exists():
+            return str(clean_path.absolute())
+        
+        # Fall back to legacy format (with ID)
+        legacy_folder_name = f"dataset_{dataset_id:03d}_{safe_name}"
+        legacy_path = self.datasets_dir / legacy_folder_name
+        if legacy_path.exists():
+            return str(legacy_path.absolute())
+        
         return None
     
     def get_raw_data_path(self, dataset_folder: str) -> str:
@@ -152,3 +164,37 @@ class DatasetFolderManager:
         sanitized = re.sub(r'[<>:"/\\|?*\s]', '_', name)
         sanitized = sanitized.strip('_.')
         return sanitized[:30] if len(sanitized) > 30 else sanitized
+    
+    def check_dataset_conflicts(self, dataset_name: str) -> Dict[str, bool]:
+        """Check for potential conflicts with existing datasets.
+        
+        Args:
+            dataset_name: Name of the dataset to check
+            
+        Returns:
+            Dict with conflict information:
+            - 'folder_exists': True if folder already exists
+            - 'clean_folder_exists': True if clean name folder exists
+            - 'legacy_folder_exists': True if legacy format folder exists
+        """
+        safe_name = self._sanitize_folder_name(dataset_name)
+        
+        # Check clean name folder
+        clean_path = self.datasets_dir / safe_name
+        clean_exists = clean_path.exists()
+        
+        # Check for any legacy folders (we don't know the ID, so check pattern)
+        legacy_exists = False
+        if self.datasets_dir.exists():
+            for folder in self.datasets_dir.iterdir():
+                if folder.is_dir() and folder.name.endswith(f"_{safe_name}"):
+                    # Check if it matches the pattern dataset_XXX_name
+                    if folder.name.startswith("dataset_") and len(folder.name.split("_")) >= 3:
+                        legacy_exists = True
+                        break
+        
+        return {
+            'folder_exists': clean_exists or legacy_exists,
+            'clean_folder_exists': clean_exists,
+            'legacy_folder_exists': legacy_exists
+        }

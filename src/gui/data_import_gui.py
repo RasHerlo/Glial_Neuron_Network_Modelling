@@ -715,11 +715,13 @@ class DataImportGUI:
                     metadata={}  # Will be updated with import settings
                 )
                 
-                # Create dataset folder structure
+                # Create dataset folder structure using clean names
                 folder_manager = DatasetFolderManager()
+                actual_dataset_name = dataset_name if len(self.selected_files) == 1 else f"{dataset_name}_{i+1:03d}"
                 dataset_folder = folder_manager.create_dataset_folder(
                     temp_dataset_id, 
-                    dataset_name if len(self.selected_files) == 1 else f"{dataset_name}_{i+1:03d}"
+                    actual_dataset_name,
+                    use_clean_names=True  # Use new clean naming convention
                 )
                 
                 # Determine final file path

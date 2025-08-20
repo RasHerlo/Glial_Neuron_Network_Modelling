@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 
 from ..database.operations import DatasetOperations
+from ..utils.folder_manager import DatasetFolderManager
 
 
 class BaseImporter:
@@ -356,6 +357,7 @@ class DataImportManager:
             JSONImporter(),
             TextImporter()
         ]
+        self.folder_manager = DatasetFolderManager()
     
     def get_importer(self, file_path: str) -> Optional[BaseImporter]:
         """Get appropriate importer for file."""
@@ -372,6 +374,12 @@ class DataImportManager:
                 'success': False,
                 'message': f'File not found: {file_path}'
             }
+        
+        # Check for duplicates if dataset name is provided
+        if dataset_name:
+            duplicate_check = self._check_for_duplicates(dataset_name)
+            if not duplicate_check['can_proceed']:
+                return duplicate_check
         
         # Get appropriate importer
         importer = self.get_importer(file_path)
@@ -450,3 +458,55 @@ class DataImportManager:
                 result['data'] = result['data'].head(max_rows)
         
         return result
+    
+    def _check_for_duplicates(self, dataset_name: str) -> Dict[str, Any]:
+        """Check for duplicate datasets and return appropriate response.
+        
+        Args:
+            dataset_name: Name of the dataset to check
+            
+        Returns:
+            Dict with 'can_proceed' boolean and 'message' if conflicts found
+        """
+        # Check database for existing dataset
+        existing_dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+        
+        # Check filesystem for existing folders
+        folder_conflicts = self.folder_manager.check_dataset_conflicts(dataset_name)
+        
+        # Determine conflict type and create appropriate message
+        if existing_dataset and folder_conflicts['folder_exists']:
+            # Both database and folder exist
+            return {
+                'success': False,
+                'can_proceed': False,
+                'message': f'Dataset "{dataset_name}" already exists in both database and filesystem.\n'
+                          f'Database ID: {existing_dataset.id}\n'
+                          f'Import cancelled to prevent conflicts. Please handle manually.'
+            }
+        elif existing_dataset:
+            # Database exists but no folder
+            return {
+                'success': False,
+                'can_proceed': False,
+                'message': f'Dataset "{dataset_name}" already exists in database (ID: {existing_dataset.id}) '
+                          f'but folder is missing.\n'
+                          f'Import cancelled. Please resolve this conflict manually.'
+            }
+        elif folder_conflicts['folder_exists']:
+            # Folder exists but no database entry
+            folder_type = "clean name" if folder_conflicts['clean_folder_exists'] else "legacy format"
+            return {
+                'success': False,
+                'can_proceed': False,
+                'message': f'Dataset folder "{dataset_name}" already exists ({folder_type}) '
+                          f'but no database entry found.\n'
+                          f'Import cancelled. Please resolve this conflict manually.'
+            }
+        
+        # No conflicts found
+        return {
+            'success': True,
+            'can_proceed': True,
+            'message': 'No conflicts detected'
+        }
