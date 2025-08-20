@@ -70,22 +70,16 @@ class DataProcessingGUI:
         ttk.Label(processing_frame, text="Processing Type:").grid(row=0, column=0, sticky="w", padx=5)
         self.processing_type_var = tk.StringVar()
         processing_combo = ttk.Combobox(processing_frame, textvariable=self.processing_type_var,
-                                       values=["Data Cleaning", "Smoothing", "Filtering", 
-                                              "Feature Extraction", "Statistical Analysis", 
-                                              "Custom Processing"], 
+                                       values=["Matrix Extraction"], 
                                        state="readonly", width=30)
         processing_combo.grid(row=0, column=1, padx=5, pady=2)
         processing_combo.bind('<<ComboboxSelected>>', self.on_processing_type_change)
         
-        # Job name
-        ttk.Label(processing_frame, text="Job Name:").grid(row=1, column=0, sticky="w", padx=5)
-        self.job_name_var = tk.StringVar()
-        job_name_entry = ttk.Entry(processing_frame, textvariable=self.job_name_var, width=32)
-        job_name_entry.grid(row=1, column=1, padx=5, pady=2)
+
         
         # Parameters frame
         params_frame = ttk.LabelFrame(processing_frame, text="Parameters", padding=5)
-        params_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        params_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
         
         # Dynamic parameters based on processing type
         self.params_frame = ttk.Frame(params_frame)
@@ -127,12 +121,16 @@ class DataProcessingGUI:
         action_frame = ttk.Frame(self.window)
         action_frame.pack(fill="x", padx=20, pady=10)
         
+        ttk.Button(action_frame, text="Preview Matrix", 
+                  command=self.preview_matrix).pack(side="left", padx=5)
         ttk.Button(action_frame, text="Start Processing", 
                   command=self.start_processing).pack(side="left", padx=5)
         ttk.Button(action_frame, text="Refresh Jobs", 
                   command=self.refresh_jobs).pack(side="left", padx=5)
         ttk.Button(action_frame, text="Cancel Selected Job", 
                   command=self.cancel_job).pack(side="left", padx=5)
+        ttk.Button(action_frame, text="Remove Finished Job", 
+                  command=self.remove_finished_job).pack(side="left", padx=5)
         ttk.Button(action_frame, text="Close", 
                   command=self.window.destroy).pack(side="right", padx=5)
         
@@ -147,12 +145,14 @@ class DataProcessingGUI:
             widget.destroy()
         self.param_vars.clear()
         
-        # Default parameters
+        # Matrix Extraction parameters
         params = [
-            ("smoothing_factor", "Smoothing Factor:", "0.5", "float"),
-            ("window_size", "Window Size:", "10", "int"),
-            ("threshold", "Threshold:", "0.1", "float"),
-            ("normalize", "Normalize Data:", True, "bool")
+            ("matrix_name", "Matrix Name:", "extracted_matrix", "str"),
+            ("matrix_range", "Matrix Range:", "B3:AJW1217", "str"),
+            ("column_labels_range", "Column Labels Range:", "B1:AJW1", "str"),
+            ("row_labels_range", "Row Labels Range:", "A3:A1217", "str"),
+            ("transpose_matrix", "Transpose Matrix:", False, "bool"),
+            ("auto_detect", "Auto-detect Ranges:", False, "bool")
         ]
         
         for i, (key, label, default, param_type) in enumerate(params):
@@ -162,6 +162,12 @@ class DataProcessingGUI:
                 self.param_vars[key] = tk.BooleanVar(value=default)
                 ttk.Checkbutton(self.params_frame, variable=self.param_vars[key]).grid(
                     row=i, column=1, sticky="w", padx=5)
+            elif param_type == "combo":
+                self.param_vars[key] = tk.StringVar(value=default[0] if isinstance(default, list) else default)
+                combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars[key],
+                                   values=default if isinstance(default, list) else [default],
+                                   state="readonly", width=18)
+                combo.grid(row=i, column=1, padx=5)
             else:
                 self.param_vars[key] = tk.StringVar(value=str(default))
                 ttk.Entry(self.params_frame, textvariable=self.param_vars[key], 
@@ -171,12 +177,8 @@ class DataProcessingGUI:
         """Update parameters based on processing type."""
         processing_type = self.processing_type_var.get()
         
-        # Auto-fill job name if empty
-        if not self.job_name_var.get() and self.selected_dataset:
-            self.job_name_var.set(f"{processing_type}_{self.selected_dataset.name}")
-        
-        # You could customize parameters based on processing type here
-        # For now, we'll keep the default parameters
+        # Matrix Extraction parameters are already set in create_default_params
+        # Could add dynamic parameter updates here if needed
     
     def load_datasets(self):
         """Load available datasets."""
@@ -220,11 +222,6 @@ class DataProcessingGUI:
             messagebox.showwarning("No Processing Type", "Please select a processing type.")
             return
         
-        job_name = self.job_name_var.get().strip()
-        if not job_name:
-            messagebox.showwarning("No Job Name", "Please enter a job name.")
-            return
-        
         try:
             # Collect parameters
             parameters = {}
@@ -232,15 +229,14 @@ class DataProcessingGUI:
                 if isinstance(var, tk.BooleanVar):
                     parameters[key] = var.get()
                 else:
-                    value = var.get()
-                    # Try to convert to appropriate type
-                    try:
-                        if '.' in value:
-                            parameters[key] = float(value)
-                        else:
-                            parameters[key] = int(value)
-                    except ValueError:
-                        parameters[key] = value
+                    value = var.get().strip()
+                    
+                    # Handle string parameters
+                    parameters[key] = value if value else None
+            
+            # Generate job name from matrix name
+            matrix_name = parameters.get('matrix_name', 'extracted_matrix')
+            job_name = f"Matrix_Extraction_{matrix_name}"
             
             # Create processing job
             job_id = ProcessingJobOperations.create_job(
@@ -253,8 +249,8 @@ class DataProcessingGUI:
             # Start processing in background thread
             ProcessingJobOperations.update_job_status(job_id, "running", progress=0.0)
             
-            # Simulate processing with a background thread
-            threading.Thread(target=self.simulate_processing, args=(job_id,), daemon=True).start()
+            # Start real processing with a background thread
+            threading.Thread(target=self.real_processing, args=(job_id, processing_type, parameters), daemon=True).start()
             
             messagebox.showinfo("Success", f"Processing job '{job_name}' started successfully!")
             self.refresh_jobs()
@@ -262,25 +258,137 @@ class DataProcessingGUI:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to start processing: {str(e)}")
     
-    def simulate_processing(self, job_id):
-        """Simulate processing job progress."""
+    def preview_matrix(self):
+        """Preview the matrix extraction."""
+        if not self.selected_dataset:
+            messagebox.showwarning("No Dataset", "Please select a dataset to preview.")
+            return
+        
         try:
-            # Simulate processing steps
-            steps = ["Initializing", "Loading data", "Processing", "Analyzing", "Saving results"]
+            # Collect parameters
+            parameters = {}
+            for key, var in self.param_vars.items():
+                if isinstance(var, tk.BooleanVar):
+                    parameters[key] = var.get()
+                else:
+                    value = var.get().strip()
+                    parameters[key] = value if value else None
             
-            for i, step in enumerate(steps):
-                time.sleep(2)  # Simulate work
-                progress = (i + 1) / len(steps) * 100
-                ProcessingJobOperations.update_job_status(job_id, "running", progress=progress)
+            # Load data
+            if self.selected_dataset.file_format == 'csv':
+                import pandas as pd
+                data = pd.read_csv(self.selected_dataset.file_path, header=None)
+            elif self.selected_dataset.file_format in ['xlsx', 'xls']:
+                import pandas as pd
+                data = pd.read_excel(self.selected_dataset.file_path, header=None)
+            else:
+                messagebox.showerror("Error", f"Unsupported file format: {self.selected_dataset.file_format}")
+                return
+            
+            # Get processor and generate preview
+            from src.data_processing.processors import MatrixExtractionProcessor
+            processor = MatrixExtractionProcessor()
+            preview_result = processor.get_preview(data, parameters)
+            
+            if preview_result['success']:
+                self.show_preview_window(preview_result)
+            else:
+                messagebox.showerror("Preview Error", preview_result['message'])
                 
-                # Update GUI in main thread
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate preview: {str(e)}")
+    
+    def show_preview_window(self, preview_result):
+        """Show preview in a separate window."""
+        preview_window = tk.Toplevel(self.window)
+        preview_window.title(f"Matrix Preview - {preview_result['matrix_name']}")
+        preview_window.geometry("800x600")
+        
+        # Info frame
+        info_frame = ttk.Frame(preview_window)
+        info_frame.pack(fill="x", padx=10, pady=5)
+        
+        info_text = f"Matrix: {preview_result['matrix_name']}\n"
+        info_text += f"Full Size: {preview_result['full_shape']}\n"
+        info_text += f"Preview Size: {preview_result['preview_shape']}\n"
+        info_text += f"Transposed: {preview_result['transposed']}"
+        
+        ttk.Label(info_frame, text=info_text, font=("Arial", 10)).pack(anchor="w")
+        
+        # Preview frame with scrollbars
+        preview_frame = ttk.Frame(preview_window)
+        preview_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Create text widget with scrollbars
+        text_frame = ttk.Frame(preview_frame)
+        text_frame.pack(fill="both", expand=True)
+        
+        preview_text = tk.Text(text_frame, wrap=tk.NONE, font=("Courier", 9))
+        
+        # Scrollbars
+        v_scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=preview_text.yview)
+        h_scrollbar = ttk.Scrollbar(text_frame, orient="horizontal", command=preview_text.xview)
+        
+        preview_text.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        
+        # Pack scrollbars and text
+        v_scrollbar.pack(side="right", fill="y")
+        h_scrollbar.pack(side="bottom", fill="x")
+        preview_text.pack(side="left", fill="both", expand=True)
+        
+        # Insert preview data
+        preview_matrix = preview_result['preview_matrix']
+        preview_text.insert("1.0", preview_matrix.to_string())
+        preview_text.config(state="disabled")
+        
+        # Close button
+        ttk.Button(preview_window, text="Close", command=preview_window.destroy).pack(pady=10)
+    
+    def real_processing(self, job_id, processing_type, parameters):
+        """Perform actual matrix extraction processing."""
+        try:
+            def progress_callback(progress):
+                ProcessingJobOperations.update_job_status(job_id, "running", progress=progress)
                 self.window.after(0, self.refresh_jobs)
             
-            # Complete the job
-            ProcessingJobOperations.update_job_status(
-                job_id, "completed", progress=100.0, 
-                output_path=f"data/processed/job_{job_id}_output.csv"
+            # Import the processing manager
+            from src.data_processing.processors import DataProcessingManager
+            
+            # Create processing manager
+            manager = DataProcessingManager()
+            
+            # Get the job details to find the dataset
+            from src.database.connection import get_database
+            db = get_database()
+            job_query = "SELECT dataset_id, job_name FROM processing_jobs WHERE id = ?"
+            job_result = db.execute_query(job_query, (job_id,))
+            
+            if not job_result:
+                raise Exception(f"Job {job_id} not found in database")
+            
+            dataset_id, job_name = job_result[0]
+            
+            # Process the dataset
+            result = manager.process_dataset(
+                dataset_id=dataset_id,
+                processor_name=processing_type,
+                job_name=job_name,
+                parameters=parameters,
+                progress_callback=progress_callback
             )
+            
+            if result['success']:
+                # Complete the job with actual output path
+                output_path = result.get('output_path', 'No output file')
+                ProcessingJobOperations.update_job_status(
+                    job_id, "completed", progress=100.0, 
+                    output_path=output_path
+                )
+            else:
+                # Job failed
+                ProcessingJobOperations.update_job_status(
+                    job_id, "failed", error_message=result.get('message', 'Unknown error')
+                )
             
             # Final GUI update
             self.window.after(0, self.refresh_jobs)
@@ -343,6 +451,61 @@ class DataProcessingGUI:
         
         # This would require more complex job management
         messagebox.showinfo("Coming Soon", "Job cancellation will be implemented soon!")
+    
+    def remove_finished_job(self):
+        """Remove selected finished or failed job."""
+        selection = self.jobs_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a job to remove.")
+            return
+        
+        try:
+            # Get selected job info
+            item = self.jobs_tree.item(selection[0])
+            job_name = item['text']
+            job_status = item['values'][2]  # Status column
+            
+            # Only allow removal of completed or failed jobs
+            if job_status not in ['completed', 'failed']:
+                messagebox.showwarning("Cannot Remove", 
+                                     f"Cannot remove job with status '{job_status}'. "
+                                     "Only completed or failed jobs can be removed.")
+                return
+            
+            # Confirm removal
+            confirm = messagebox.askyesno("Confirm Removal", 
+                                        f"Are you sure you want to remove the job '{job_name}'?\n"
+                                        "This action cannot be undone.")
+            
+            if confirm:
+                # Find the job ID from the database
+                from src.database.connection import get_database
+                db = get_database()
+                
+                # Get job ID by name and status
+                job_query = """
+                    SELECT id FROM processing_jobs 
+                    WHERE job_name = ? AND status = ?
+                    ORDER BY start_time DESC LIMIT 1
+                """
+                job_result = db.execute_query(job_query, (job_name, job_status))
+                
+                if job_result:
+                    job_id = job_result[0][0]
+                    
+                    # Delete the job from database
+                    delete_query = "DELETE FROM processing_jobs WHERE id = ?"
+                    db.execute_query(delete_query, (job_id,))
+                    
+                    # Refresh the jobs list
+                    self.refresh_jobs()
+                    
+                    messagebox.showinfo("Success", f"Job '{job_name}' has been removed.")
+                else:
+                    messagebox.showerror("Error", "Could not find job in database.")
+                    
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to remove job: {str(e)}")
     
     def schedule_job_refresh(self):
         """Schedule periodic job refresh."""
