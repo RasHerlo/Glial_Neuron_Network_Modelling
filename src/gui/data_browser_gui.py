@@ -29,8 +29,10 @@ class DataBrowserGUI:
         self.window.configure(bg='#f0f0f0')
         
         self.selected_dataset = None
+        self.selected_folder_path = None
         self.datasets = []
         self.filtered_datasets = []
+        self.folder_manager = DatasetFolderManager()
         
         self.setup_ui()
         self.load_datasets()
@@ -87,23 +89,21 @@ class DataBrowserGUI:
         sort_combo.grid(row=2, column=1, padx=5, pady=2)
         
         # Dataset list frame
-        list_frame = ttk.LabelFrame(left_frame, text="Datasets", padding=5)
+        list_frame = ttk.LabelFrame(left_frame, text="Dataset Folders", padding=5)
         list_frame.pack(fill="both", expand=True, padx=5, pady=5)
         
-        # Dataset treeview
-        columns = ("name", "format", "size", "date")
+        # Dataset folder treeview
+        columns = ("type", "size", "date")
         self.dataset_tree = ttk.Treeview(list_frame, columns=columns, show="tree headings", height=20)
         
         # Configure columns
-        self.dataset_tree.heading("#0", text="ID")
-        self.dataset_tree.heading("name", text="Name")
-        self.dataset_tree.heading("format", text="Format")
+        self.dataset_tree.heading("#0", text="Dataset / Folder")
+        self.dataset_tree.heading("type", text="Type")
         self.dataset_tree.heading("size", text="Size")
-        self.dataset_tree.heading("date", text="Import Date")
+        self.dataset_tree.heading("date", text="Date")
         
-        self.dataset_tree.column("#0", width=50)
-        self.dataset_tree.column("name", width=200)
-        self.dataset_tree.column("format", width=80)
+        self.dataset_tree.column("#0", width=250)
+        self.dataset_tree.column("type", width=100)
         self.dataset_tree.column("size", width=100)
         self.dataset_tree.column("date", width=120)
         
@@ -395,30 +395,96 @@ class DataBrowserGUI:
         self.update_dataset_display()
     
     def update_dataset_display(self):
-        """Update the dataset treeview display."""
+        """Update the dataset treeview display with folder structure."""
         # Clear existing items
         for item in self.dataset_tree.get_children():
             self.dataset_tree.delete(item)
         
-        # Add filtered datasets
+        # Add filtered datasets as folder structure
         for dataset in self.filtered_datasets:
-            # Format file size
-            if dataset.file_size:
-                if dataset.file_size > 1024*1024:
-                    size_str = f"{dataset.file_size / (1024*1024):.1f} MB"
-                elif dataset.file_size > 1024:
-                    size_str = f"{dataset.file_size / 1024:.1f} KB"
-                else:
-                    size_str = f"{dataset.file_size} B"
-            else:
-                size_str = "Unknown"
+            # Get dataset folder path
+            dataset_folder = self.folder_manager.get_dataset_folder(dataset.id, dataset.name)
+            
+            if not dataset_folder or not os.path.exists(dataset_folder):
+                # Fallback: show dataset as file if no folder structure exists
+                date_str = dataset.import_date.strftime("%Y-%m-%d %H:%M") if dataset.import_date else "Unknown"
+                size_str = self._format_file_size(dataset.file_size)
+                
+                self.dataset_tree.insert("", "end", text=dataset.name,
+                                       values=("Dataset (file)", size_str, date_str),
+                                       tags=("dataset",))
+                continue
             
             # Format date
             date_str = dataset.import_date.strftime("%Y-%m-%d %H:%M") if dataset.import_date else "Unknown"
             
-            self.dataset_tree.insert("", "end", text=str(dataset.id),
-                                   values=(dataset.name, dataset.file_format or "Unknown", 
-                                         size_str, date_str))
+            # Insert main dataset folder with clean display name
+            dataset_item = self.dataset_tree.insert("", "end", text=dataset.name,
+                                                   values=("Dataset Folder", "", date_str),
+                                                   tags=("dataset_folder",))
+            
+            # Add subfolders
+            self._add_subfolders(dataset_item, dataset_folder, dataset)
+    
+    def _add_subfolders(self, parent_item, folder_path, dataset):
+        """Add subfolders to the dataset tree."""
+        try:
+            subfolders = ["raw", "processed", "figures"]
+            
+            for subfolder in subfolders:
+                subfolder_path = os.path.join(folder_path, subfolder)
+                if os.path.exists(subfolder_path):
+                    # Count files in subfolder
+                    file_count = self._count_files_in_folder(subfolder_path)
+                    count_str = f"{file_count} files" if file_count > 0 else "empty"
+                    
+                    subfolder_item = self.dataset_tree.insert(parent_item, "end", text=subfolder,
+                                                            values=("Folder", count_str, ""),
+                                                            tags=("subfolder",))
+                    
+                    # For processed folder, add type subfolders
+                    if subfolder == "processed":
+                        self._add_processed_subfolders(subfolder_item, subfolder_path)
+        except Exception as e:
+            print(f"Error adding subfolders: {e}")
+    
+    def _add_processed_subfolders(self, parent_item, processed_path):
+        """Add processed data type subfolders."""
+        try:
+            type_folders = ["matrices", "pca", "vectors", "statistics"]
+            
+            for type_folder in type_folders:
+                type_path = os.path.join(processed_path, type_folder)
+                if os.path.exists(type_path):
+                    file_count = self._count_files_in_folder(type_path)
+                    count_str = f"{file_count} files" if file_count > 0 else "empty"
+                    
+                    self.dataset_tree.insert(parent_item, "end", text=type_folder,
+                                           values=("Data Type", count_str, ""),
+                                           tags=("data_type",))
+        except Exception as e:
+            print(f"Error adding processed subfolders: {e}")
+    
+    def _count_files_in_folder(self, folder_path):
+        """Count files in a folder."""
+        try:
+            if not os.path.exists(folder_path):
+                return 0
+            return len([f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))])
+        except Exception:
+            return 0
+    
+    def _format_file_size(self, file_size):
+        """Format file size for display."""
+        if not file_size:
+            return "Unknown"
+        
+        if file_size > 1024*1024:
+            return f"{file_size / (1024*1024):.1f} MB"
+        elif file_size > 1024:
+            return f"{file_size / 1024:.1f} KB"
+        else:
+            return f"{file_size} B"
     
     def on_search_change(self, *args):
         """Handle search text change."""
@@ -433,17 +499,95 @@ class DataBrowserGUI:
         self.apply_filters_and_display()
     
     def on_dataset_select(self, event):
-        """Handle dataset selection."""
+        """Handle dataset/folder selection."""
         selection = self.dataset_tree.selection()
         if selection:
-            item = self.dataset_tree.item(selection[0])
-            dataset_id = int(item['text'])
+            item_id = selection[0]
+            item = self.dataset_tree.item(item_id)
+            item_text = item['text']
+            item_tags = item['tags']
             
-            # Find the dataset object
-            self.selected_dataset = next((d for d in self.filtered_datasets if d.id == dataset_id), None)
+            # Reset selection state
+            self.selected_dataset = None
+            self.selected_folder_path = None
             
-            if self.selected_dataset:
-                self.update_dataset_details()
+            if 'dataset_folder' in item_tags:
+                # Selected a dataset folder - find the dataset
+                dataset_name = item_text  # This is the display name we set
+                self.selected_dataset = next((d for d in self.filtered_datasets if d.name == dataset_name), None)
+                if self.selected_dataset:
+                    dataset_folder = self.folder_manager.get_dataset_folder(self.selected_dataset.id, self.selected_dataset.name)
+                    self.selected_folder_path = dataset_folder
+                    self.update_dataset_details()
+            
+            elif 'dataset' in item_tags:
+                # Selected a dataset (file-based, no folder structure)
+                self.selected_dataset = next((d for d in self.filtered_datasets if d.name == item_text), None)
+                if self.selected_dataset:
+                    self.update_dataset_details()
+            
+            elif 'subfolder' in item_tags or 'data_type' in item_tags:
+                # Selected a subfolder - show folder contents
+                folder_path = self._get_full_folder_path(item_id)
+                self.selected_folder_path = folder_path
+                
+                # Also find the parent dataset
+                parent_dataset = self._find_parent_dataset(item_id)
+                self.selected_dataset = parent_dataset
+                
+                self.update_folder_contents_display()
+    
+    def _get_full_folder_path(self, item_id):
+        """Get the full path for a selected folder item."""
+        try:
+            # Build path by walking up the tree
+            path_parts = []
+            current_item = item_id
+            
+            while current_item:
+                item = self.dataset_tree.item(current_item)
+                item_text = item['text']
+                item_tags = item['tags']
+                
+                if 'dataset_folder' in item_tags:
+                    # Found the dataset folder - get its actual path
+                    dataset_name = item_text
+                    dataset = next((d for d in self.filtered_datasets if d.name == dataset_name), None)
+                    if dataset:
+                        dataset_folder = self.folder_manager.get_dataset_folder(dataset.id, dataset.name)
+                        if dataset_folder:
+                            path_parts.reverse()
+                            return os.path.join(dataset_folder, *path_parts)
+                    break
+                else:
+                    path_parts.append(item_text)
+                
+                current_item = self.dataset_tree.parent(current_item)
+            
+            return None
+        except Exception as e:
+            print(f"Error getting folder path: {e}")
+            return None
+    
+    def _find_parent_dataset(self, item_id):
+        """Find the parent dataset for a folder item."""
+        try:
+            current_item = item_id
+            
+            while current_item:
+                item = self.dataset_tree.item(current_item)
+                item_tags = item['tags']
+                
+                if 'dataset_folder' in item_tags:
+                    dataset_name = item['text']
+                    return next((d for d in self.filtered_datasets if d.name == dataset_name), None)
+                
+                current_item = self.dataset_tree.parent(current_item)
+            
+            return None
+        except Exception as e:
+            print(f"Error finding parent dataset: {e}")
+            return None
     
     def update_dataset_details(self):
         """Update the dataset details panel."""
@@ -488,6 +632,123 @@ class DataBrowserGUI:
         
         # Update statistics (placeholder)
         self.update_statistics()
+    
+    def update_folder_contents_display(self):
+        """Update the display to show folder contents when a folder is selected."""
+        if not self.selected_folder_path or not os.path.exists(self.selected_folder_path):
+            return
+        
+        # Clear all tabs and create a folder contents tab
+        for tab_id in self.details_notebook.tabs():
+            self.details_notebook.forget(tab_id)
+        
+        # Create folder contents tab
+        folder_frame = ttk.Frame(self.details_notebook)
+        self.details_notebook.add(folder_frame, text="Folder Contents")
+        
+        # Folder info
+        info_frame = ttk.LabelFrame(folder_frame, text="Folder Information", padding=10)
+        info_frame.pack(fill="x", padx=10, pady=5)
+        
+        folder_name = os.path.basename(self.selected_folder_path)
+        ttk.Label(info_frame, text=f"Folder: {folder_name}", font=("Arial", 12, "bold")).pack(anchor="w")
+        ttk.Label(info_frame, text=f"Path: {self.selected_folder_path}").pack(anchor="w")
+        
+        # File list
+        files_frame = ttk.LabelFrame(folder_frame, text="Files", padding=10)
+        files_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Create treeview for files
+        file_columns = ("name", "size", "modified")
+        file_tree = ttk.Treeview(files_frame, columns=file_columns, show="tree headings", height=15)
+        
+        # Configure columns
+        file_tree.heading("#0", text="Type")
+        file_tree.heading("name", text="File Name")
+        file_tree.heading("size", text="Size")
+        file_tree.heading("modified", text="Modified")
+        
+        file_tree.column("#0", width=80)
+        file_tree.column("name", width=300)
+        file_tree.column("size", width=100)
+        file_tree.column("modified", width=150)
+        
+        # Add files to tree
+        try:
+            files = os.listdir(self.selected_folder_path)
+            files.sort()
+            
+            for file_name in files:
+                file_path = os.path.join(self.selected_folder_path, file_name)
+                
+                if os.path.isfile(file_path):
+                    # Get file info
+                    file_size = os.path.getsize(file_path)
+                    file_modified = datetime.fromtimestamp(os.path.getmtime(file_path))
+                    
+                    # Format size and date
+                    size_str = self._format_file_size(file_size)
+                    date_str = file_modified.strftime("%Y-%m-%d %H:%M")
+                    
+                    # Determine file type icon
+                    ext = os.path.splitext(file_name)[1].lower()
+                    if ext in ['.csv', '.tsv']:
+                        file_type = "📊"
+                    elif ext in ['.png', '.jpg', '.jpeg', '.svg']:
+                        file_type = "🖼️"
+                    elif ext in ['.npy', '.npz']:
+                        file_type = "🔢"
+                    elif ext in ['.json']:
+                        file_type = "📝"
+                    else:
+                        file_type = "📄"
+                    
+                    file_tree.insert("", "end", text=file_type,
+                                   values=(file_name, size_str, date_str))
+        
+        except Exception as e:
+            error_label = ttk.Label(files_frame, text=f"Error reading folder: {str(e)}")
+            error_label.pack()
+            return
+        
+        # Add scrollbar
+        file_scrollbar = ttk.Scrollbar(files_frame, orient="vertical", command=file_tree.yview)
+        file_tree.configure(yscrollcommand=file_scrollbar.set)
+        
+        file_tree.pack(side="left", fill="both", expand=True)
+        file_scrollbar.pack(side="right", fill="y")
+        
+        # Bind double-click to open file
+        def on_file_double_click(event):
+            selection = file_tree.selection()
+            if selection:
+                item = file_tree.item(selection[0])
+                file_name = item['values'][0]
+                file_path = os.path.join(self.selected_folder_path, file_name)
+                self.open_file_external(file_path)
+        
+        file_tree.bind("<Double-1>", on_file_double_click)
+        
+        # Action buttons
+        button_frame = ttk.Frame(folder_frame)
+        button_frame.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Button(button_frame, text="Open Folder", 
+                  command=lambda: self.open_file_external(self.selected_folder_path)).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Refresh", 
+                  command=self.update_folder_contents_display).pack(side="left", padx=5)
+    
+    def open_file_external(self, file_path):
+        """Open a file or folder with the system default application."""
+        try:
+            if platform.system() == 'Darwin':  # macOS
+                subprocess.call(('open', file_path))
+            elif platform.system() == 'Windows':  # Windows
+                os.startfile(file_path)
+            else:  # Linux
+                subprocess.call(('xdg-open', file_path))
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open file: {str(e)}")
     
     def update_processing_history(self):
         """Update the processing history tab."""
