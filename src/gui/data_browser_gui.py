@@ -122,6 +122,7 @@ class DataBrowserGUI:
         action_frame.pack(fill="x", padx=5, pady=5)
         
         ttk.Button(action_frame, text="Refresh", command=self.load_datasets).pack(side="left", padx=2)
+        ttk.Button(action_frame, text="Reload Datasets", command=self.reload_datasets).pack(side="left", padx=2)
         ttk.Button(action_frame, text="Open File", command=self.open_dataset_file).pack(side="left", padx=2)
         ttk.Button(action_frame, text="Edit", command=self.edit_dataset).pack(side="left", padx=2)
         ttk.Button(action_frame, text="Delete", command=self.delete_dataset).pack(side="left", padx=2)
@@ -750,6 +751,549 @@ class DataBrowserGUI:
         except Exception as e:
             messagebox.showerror("Error", f"Could not open file: {str(e)}")
     
+    def reload_datasets(self):
+        """Show dialog to reload orphaned dataset folders."""
+        try:
+            # Scan for orphaned folders
+            orphaned_folders = self._scan_orphaned_folders()
+            
+            if not orphaned_folders:
+                messagebox.showinfo("No Orphaned Datasets", 
+                                   "No dataset folders found that are not already in the database.")
+                return
+            
+            # Show selection dialog
+            self._show_reload_selection_dialog(orphaned_folders)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to scan for datasets: {str(e)}")
+    
+    def _scan_orphaned_folders(self):
+        """Scan for dataset folders that don't have database entries."""
+        orphaned = []
+        datasets_dir = self.folder_manager.datasets_dir
+        
+        if not datasets_dir.exists():
+            return orphaned
+        
+        # Get all existing dataset names from database
+        existing_datasets = {d.name for d in self.datasets}
+        
+        # Scan all folders in datasets directory
+        for folder_path in datasets_dir.iterdir():
+            if not folder_path.is_dir():
+                continue
+                
+            folder_name = folder_path.name
+            
+            # Try to extract dataset name from folder
+            dataset_name = self._extract_dataset_name_from_folder(folder_name)
+            
+            if dataset_name and dataset_name not in existing_datasets:
+                # This folder is orphaned - get its info
+                folder_info = self._get_folder_info(folder_path, dataset_name)
+                if folder_info:
+                    orphaned.append(folder_info)
+        
+        return sorted(orphaned, key=lambda x: x['last_modified'], reverse=True)
+    
+    def _extract_dataset_name_from_folder(self, folder_name):
+        """Extract dataset name from folder name (handles both old and new formats)."""
+        # Check if it's legacy format (dataset_XXX_Name)
+        if folder_name.startswith("dataset_") and "_" in folder_name[8:]:
+            # Extract name after dataset_XXX_
+            parts = folder_name.split("_", 2)
+            if len(parts) >= 3 and parts[1].isdigit():
+                return parts[2]  # Return the name part
+        
+        # Check if it's clean format (just the name)
+        # Verify it's a valid dataset folder by checking for expected subfolders
+        folder_path = self.folder_manager.datasets_dir / folder_name
+        expected_subfolders = ['raw', 'processed', 'figures']
+        has_expected_structure = any(
+            (folder_path / subfolder).exists() 
+            for subfolder in expected_subfolders
+        )
+        
+        if has_expected_structure:
+            return folder_name
+        
+        return None
+    
+    def _get_folder_info(self, folder_path, dataset_name):
+        """Get information about a dataset folder."""
+        try:
+            # Get folder statistics
+            total_size = self._get_folder_size(folder_path)
+            last_modified = datetime.fromtimestamp(folder_path.stat().st_mtime)
+            
+            # Count contents
+            raw_count = self._count_files_in_subfolder(folder_path, 'raw')
+            processed_count = self._count_files_in_subfolder(folder_path, 'processed')
+            figures_count = self._count_files_in_subfolder(folder_path, 'figures')
+            
+            # Determine folder type
+            is_legacy = folder_path.name.startswith("dataset_")
+            
+            return {
+                'folder_path': str(folder_path),
+                'folder_name': folder_path.name,
+                'dataset_name': dataset_name,
+                'total_size': total_size,
+                'last_modified': last_modified,
+                'raw_files': raw_count,
+                'processed_files': processed_count,
+                'figures': figures_count,
+                'is_legacy_format': is_legacy
+            }
+        except Exception as e:
+            print(f"Error getting folder info for {folder_path}: {e}")
+            return None
+    
+    def _get_folder_size(self, folder_path):
+        """Calculate total size of folder and all subfolders."""
+        total_size = 0
+        try:
+            for path in folder_path.rglob('*'):
+                if path.is_file():
+                    total_size += path.stat().st_size
+        except Exception:
+            pass
+        return total_size
+    
+    def _count_files_in_subfolder(self, folder_path, subfolder_name):
+        """Count files in a specific subfolder."""
+        subfolder_path = folder_path / subfolder_name
+        if not subfolder_path.exists():
+            return 0
+        
+        try:
+            return len([f for f in subfolder_path.rglob('*') if f.is_file()])
+        except Exception:
+            return 0
+    
+    def _show_reload_selection_dialog(self, orphaned_folders):
+        """Show dialog to select which datasets to reload."""
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Reload Datasets")
+        dialog.geometry("800x500")
+        dialog.transient(self.window)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.geometry("+%d+%d" % (self.window.winfo_rootx() + 50, self.window.winfo_rooty() + 50))
+        
+        # Title
+        title_label = ttk.Label(dialog, text=f"Found {len(orphaned_folders)} dataset folder(s) to reload", 
+                               font=("Arial", 12, "bold"))
+        title_label.pack(pady=10)
+        
+        # Instructions
+        instructions = ttk.Label(dialog, 
+                                text="Select the datasets you want to reload. All processed data and figures will be preserved.",
+                                wraplength=750)
+        instructions.pack(pady=5)
+        
+        # Create frame for treeview
+        tree_frame = ttk.Frame(dialog)
+        tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Create treeview with checkboxes
+        columns = ("select", "dataset_name", "size", "last_modified", "contents", "type")
+        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=15)
+        
+        # Configure columns
+        tree.heading("select", text="Select")
+        tree.heading("dataset_name", text="Dataset Name")
+        tree.heading("size", text="Size")
+        tree.heading("last_modified", text="Last Modified")
+        tree.heading("contents", text="Contents")
+        tree.heading("type", text="Format")
+        
+        tree.column("select", width=80)
+        tree.column("dataset_name", width=200)
+        tree.column("size", width=100)
+        tree.column("last_modified", width=120)
+        tree.column("contents", width=150)
+        tree.column("type", width=100)
+        
+        # Add data to tree
+        item_data = {}  # Store folder info by item ID
+        for folder_info in orphaned_folders:
+            # Format size
+            size_str = self._format_file_size(folder_info['total_size'])
+            
+            # Format date
+            date_str = folder_info['last_modified'].strftime("%Y-%m-%d %H:%M")
+            
+            # Format contents
+            contents = f"{folder_info['raw_files']} raw, {folder_info['processed_files']} proc, {folder_info['figures']} figs"
+            
+            # Format type
+            type_str = "Legacy" if folder_info['is_legacy_format'] else "Clean"
+            
+            item_id = tree.insert("", "end",
+                                values=("☐", folder_info['dataset_name'], size_str, date_str, contents, type_str))
+            item_data[item_id] = folder_info
+        
+        # Track selected items
+        selected_items = set()
+        
+        def toggle_selection(event):
+            """Toggle item selection on click."""
+            item = tree.selection()[0] if tree.selection() else None
+            if item:
+                if item in selected_items:
+                    selected_items.remove(item)
+                    tree.set(item, "select", "☐")
+                else:
+                    selected_items.add(item)
+                    tree.set(item, "select", "☑")
+        
+        tree.bind("<Button-1>", toggle_selection)
+        tree.bind("<space>", toggle_selection)
+        
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Selection buttons
+        button_frame1 = ttk.Frame(dialog)
+        button_frame1.pack(fill="x", padx=10, pady=5)
+        
+        def select_all():
+            for item in tree.get_children():
+                selected_items.add(item)
+                tree.set(item, "select", "☑")
+        
+        def select_none():
+            selected_items.clear()
+            for item in tree.get_children():
+                tree.set(item, "select", "☐")
+        
+        ttk.Button(button_frame1, text="Select All", command=select_all).pack(side="left", padx=5)
+        ttk.Button(button_frame1, text="Select None", command=select_none).pack(side="left", padx=5)
+        
+        # Action buttons
+        button_frame2 = ttk.Frame(dialog)
+        button_frame2.pack(fill="x", padx=10, pady=10)
+        
+        def reload_selected():
+            if not selected_items:
+                messagebox.showwarning("No Selection", "Please select at least one dataset to reload.")
+                return
+            
+            # Get selected folder info
+            selected_folders = [item_data[item] for item in selected_items]
+            
+            dialog.destroy()
+            self._process_reload_datasets(selected_folders)
+        
+        def cancel_reload():
+            dialog.destroy()
+        
+        ttk.Button(button_frame2, text="Cancel", command=cancel_reload).pack(side="right", padx=5)
+        ttk.Button(button_frame2, text=f"Reload Selected", command=reload_selected).pack(side="right", padx=5)
+    
+    def _process_reload_datasets(self, selected_folders):
+        """Process the actual reloading of selected datasets."""
+        try:
+            successful_reloads = []
+            failed_reloads = []
+            conflicts = []
+            
+            for folder_info in selected_folders:
+                result = self._reload_single_dataset(folder_info)
+                
+                if result['success']:
+                    successful_reloads.append(result['dataset_name'])
+                elif result['conflict']:
+                    conflicts.append(result)
+                else:
+                    failed_reloads.append((result['dataset_name'], result['error']))
+            
+            # Handle conflicts if any
+            if conflicts:
+                self._handle_reload_conflicts(conflicts, successful_reloads, failed_reloads)
+                return
+            
+            # Show results
+            self._show_reload_results(successful_reloads, failed_reloads)
+            
+        except Exception as e:
+            messagebox.showerror("Reload Error", f"An error occurred during reload: {str(e)}")
+    
+    def _reload_single_dataset(self, folder_info):
+        """Reload a single dataset from folder information."""
+        try:
+            dataset_name = folder_info['dataset_name']
+            folder_path = folder_info['folder_path']
+            
+            # Check for naming conflicts in database
+            existing_dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+            if existing_dataset:
+                return {
+                    'success': False,
+                    'conflict': True,
+                    'dataset_name': dataset_name,
+                    'folder_info': folder_info,
+                    'existing_dataset': existing_dataset
+                }
+            
+            # Recover metadata from folder
+            metadata = self._recover_metadata_from_folder(folder_path)
+            
+            # Find original raw file for file_path and format detection
+            raw_file_info = self._find_primary_raw_file(folder_path)
+            
+            # Create database entry
+            dataset_id = DatasetOperations.create_dataset(
+                name=dataset_name,
+                file_path=raw_file_info['file_path'],
+                file_format=raw_file_info['file_format'],
+                description=f"Reloaded from folder on {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                metadata=metadata
+            )
+            
+            return {
+                'success': True,
+                'conflict': False,
+                'dataset_name': dataset_name,
+                'dataset_id': dataset_id
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'conflict': False,
+                'dataset_name': folder_info['dataset_name'],
+                'error': str(e)
+            }
+    
+    def _recover_metadata_from_folder(self, folder_path):
+        """Recover metadata from folder contents."""
+        metadata = {
+            'reloaded': True,
+            'reload_date': datetime.now().isoformat(),
+            'folder_structure': 'detected',
+            'original_folder_path': folder_path
+        }
+        
+        try:
+            # Get folder creation time as proxy for original import
+            folder_stat = os.stat(folder_path)
+            metadata['estimated_original_import'] = datetime.fromtimestamp(folder_stat.st_ctime).isoformat()
+            
+            # Count contents
+            raw_path = os.path.join(folder_path, 'raw')
+            processed_path = os.path.join(folder_path, 'processed')
+            figures_path = os.path.join(folder_path, 'figures')
+            
+            if os.path.exists(raw_path):
+                raw_files = [f for f in os.listdir(raw_path) if os.path.isfile(os.path.join(raw_path, f))]
+                metadata['raw_files'] = raw_files
+                metadata['raw_file_count'] = len(raw_files)
+            
+            if os.path.exists(processed_path):
+                processed_types = []
+                for item in os.listdir(processed_path):
+                    item_path = os.path.join(processed_path, item)
+                    if os.path.isdir(item_path):
+                        file_count = len([f for f in os.listdir(item_path) if os.path.isfile(os.path.join(item_path, f))])
+                        processed_types.append({'type': item, 'file_count': file_count})
+                metadata['processed_data_types'] = processed_types
+            
+            if os.path.exists(figures_path):
+                figure_files = [f for f in os.listdir(figures_path) if os.path.isfile(os.path.join(figures_path, f))]
+                metadata['figure_files'] = figure_files
+                metadata['figure_count'] = len(figure_files)
+                
+        except Exception as e:
+            metadata['metadata_recovery_error'] = str(e)
+        
+        return metadata
+    
+    def _find_primary_raw_file(self, folder_path):
+        """Find the primary raw file to use as the dataset's main file."""
+        raw_path = os.path.join(folder_path, 'raw')
+        
+        if not os.path.exists(raw_path):
+            return {
+                'file_path': folder_path,  # Use folder as fallback
+                'file_format': 'folder'
+            }
+        
+        try:
+            raw_files = [f for f in os.listdir(raw_path) if os.path.isfile(os.path.join(raw_path, f))]
+            
+            if not raw_files:
+                return {
+                    'file_path': raw_path,
+                    'file_format': 'empty'
+                }
+            
+            # Prefer CSV files, then other data files
+            preferred_extensions = ['.csv', '.xlsx', '.json', '.tsv', '.txt']
+            
+            for ext in preferred_extensions:
+                for file in raw_files:
+                    if file.lower().endswith(ext):
+                        return {
+                            'file_path': os.path.join(raw_path, file),
+                            'file_format': ext[1:]  # Remove the dot
+                        }
+            
+            # If no preferred file found, use the first file
+            first_file = raw_files[0]
+            ext = os.path.splitext(first_file)[1]
+            return {
+                'file_path': os.path.join(raw_path, first_file),
+                'file_format': ext[1:] if ext else 'unknown'
+            }
+            
+        except Exception:
+            return {
+                'file_path': raw_path,
+                'file_format': 'error'
+            }
+    
+    def _handle_reload_conflicts(self, conflicts, successful_reloads, failed_reloads):
+        """Handle naming conflicts during reload."""
+        if not conflicts:
+            self._show_reload_results(successful_reloads, failed_reloads)
+            return
+        
+        # Show conflict resolution dialog
+        conflict_dialog = tk.Toplevel(self.window)
+        conflict_dialog.title("Resolve Naming Conflicts")
+        conflict_dialog.geometry("600x400")
+        conflict_dialog.transient(self.window)
+        conflict_dialog.grab_set()
+        
+        # Center dialog
+        conflict_dialog.geometry("+%d+%d" % (self.window.winfo_rootx() + 100, self.window.winfo_rooty() + 100))
+        
+        # Title
+        title_label = ttk.Label(conflict_dialog, text="Naming Conflicts Found", font=("Arial", 12, "bold"))
+        title_label.pack(pady=10)
+        
+        # Instructions
+        instructions = ttk.Label(conflict_dialog, 
+                                text="The following datasets already exist. Choose new names or skip:",
+                                wraplength=550)
+        instructions.pack(pady=5)
+        
+        # Scrollable frame for conflicts
+        canvas = tk.Canvas(conflict_dialog)
+        scrollbar = ttk.Scrollbar(conflict_dialog, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Conflict resolution entries
+        resolution_vars = {}
+        
+        for i, conflict in enumerate(conflicts):
+            conflict_frame = ttk.LabelFrame(scrollable_frame, text=f"Conflict {i+1}", padding=10)
+            conflict_frame.pack(fill="x", padx=10, pady=5)
+            
+            # Original name
+            ttk.Label(conflict_frame, text=f"Original: {conflict['dataset_name']}", 
+                     font=("Arial", 10, "bold")).pack(anchor="w")
+            ttk.Label(conflict_frame, text=f"Conflicts with database ID: {conflict['existing_dataset'].id}").pack(anchor="w")
+            
+            # Resolution options
+            resolution_var = tk.StringVar(value="skip")
+            resolution_vars[i] = {
+                'var': resolution_var,
+                'conflict': conflict,
+                'new_name_var': tk.StringVar(value=f"{conflict['dataset_name']}_reloaded")
+            }
+            
+            ttk.Radiobutton(conflict_frame, text="Skip this dataset", 
+                           variable=resolution_var, value="skip").pack(anchor="w")
+            
+            rename_frame = ttk.Frame(conflict_frame)
+            rename_frame.pack(fill="x", pady=2)
+            ttk.Radiobutton(rename_frame, text="Rename to:", 
+                           variable=resolution_var, value="rename").pack(side="left")
+            ttk.Entry(rename_frame, textvariable=resolution_vars[i]['new_name_var'], width=30).pack(side="left", padx=5)
+        
+        canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+        scrollbar.pack(side="right", fill="y", pady=10)
+        
+        # Action buttons
+        button_frame = ttk.Frame(conflict_dialog)
+        button_frame.pack(fill="x", padx=10, pady=10)
+        
+        def apply_resolutions():
+            # Process each conflict based on user choice
+            additional_successful = []
+            additional_failed = []
+            
+            for i, resolution_info in resolution_vars.items():
+                choice = resolution_info['var'].get()
+                conflict = resolution_info['conflict']
+                
+                if choice == "rename":
+                    new_name = resolution_info['new_name_var'].get().strip()
+                    if new_name and new_name != conflict['dataset_name']:
+                        # Update conflict info with new name
+                        conflict['folder_info']['dataset_name'] = new_name
+                        result = self._reload_single_dataset(conflict['folder_info'])
+                        
+                        if result['success']:
+                            additional_successful.append(new_name)
+                        else:
+                            additional_failed.append((new_name, result.get('error', 'Unknown error')))
+                    else:
+                        additional_failed.append((conflict['dataset_name'], "Invalid new name"))
+                # If "skip", do nothing
+            
+            conflict_dialog.destroy()
+            
+            # Combine results and show final summary
+            all_successful = successful_reloads + additional_successful
+            all_failed = failed_reloads + additional_failed
+            self._show_reload_results(all_successful, all_failed)
+        
+        def cancel_conflicts():
+            conflict_dialog.destroy()
+            self._show_reload_results(successful_reloads, failed_reloads)
+        
+        ttk.Button(button_frame, text="Cancel", command=cancel_conflicts).pack(side="right", padx=5)
+        ttk.Button(button_frame, text="Apply", command=apply_resolutions).pack(side="right", padx=5)
+    
+    def _show_reload_results(self, successful_reloads, failed_reloads):
+        """Show the results of the reload operation."""
+        if successful_reloads:
+            success_msg = f"Successfully reloaded {len(successful_reloads)} dataset(s):\n" + "\n".join(f"• {name}" for name in successful_reloads)
+            
+            if failed_reloads:
+                failed_msg = f"\n\nFailed to reload {len(failed_reloads)} dataset(s):\n" + "\n".join(f"• {name}: {error}" for name, error in failed_reloads)
+                messagebox.showwarning("Reload Complete with Errors", success_msg + failed_msg)
+            else:
+                messagebox.showinfo("Reload Complete", success_msg)
+            
+            # Refresh the dataset list to show reloaded datasets
+            self.load_datasets()
+        
+        elif failed_reloads:
+            failed_msg = f"Failed to reload {len(failed_reloads)} dataset(s):\n" + "\n".join(f"• {name}: {error}" for name, error in failed_reloads)
+            messagebox.showerror("Reload Failed", failed_msg)
+        
+        else:
+            messagebox.showinfo("No Action", "No datasets were reloaded.")
+    
     def update_processing_history(self):
         """Update the processing history tab."""
         # Clear existing items
@@ -1163,8 +1707,10 @@ class DataBrowserGUI:
                         if key in stored_settings:
                             import_settings[key] = stored_settings[key]
             
-            # Import the complete file (no row limit) with stored settings
-            result = import_manager.import_file(file_path, **import_settings)
+            # Import the complete file (no row limit) but force raw mode for accurate file dimensions
+            stats_settings = dict(import_settings)
+            stats_settings['raw_import'] = True  # Force raw mode for accurate file statistics
+            result = import_manager.import_file(file_path, **stats_settings)
             
             if not result['success']:
                 return f"Error loading full file: {result['message']}"
@@ -1285,8 +1831,10 @@ class DataBrowserGUI:
                     if key in stored_settings:
                         import_settings[key] = stored_settings[key]
         
-        # Preview with limited rows and original import settings
-        result = import_manager.preview_file(file_path, max_rows=100, **import_settings)
+        # Preview with limited rows but force raw mode to show actual file content
+        preview_settings = dict(import_settings)
+        preview_settings['raw_import'] = True  # Force raw mode for preview to avoid header consumption
+        result = import_manager.preview_file(file_path, max_rows=100, **preview_settings)
         
         if not result['success']:
             raise Exception(result['message'])
