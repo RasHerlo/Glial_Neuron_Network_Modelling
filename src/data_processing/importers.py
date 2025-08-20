@@ -57,10 +57,13 @@ class CSVImporter(BaseImporter):
     def import_file(self, file_path: str, **kwargs) -> Dict[str, Any]:
         """Import CSV file."""
         try:
+            # Extract raw_import setting before processing other parameters
+            raw_import = kwargs.pop('raw_import', False)
+            
             # Default parameters
             params = {
                 'sep': ',' if file_path.endswith('.csv') else '\t',
-                'header': 0,
+                'header': None if raw_import else 0,  # Key change: no header assumption for raw import
                 'index_col': None,
                 'encoding': 'utf-8'
             }
@@ -72,8 +75,12 @@ class CSVImporter(BaseImporter):
             # Handle advanced import settings
             if 'skip_rows' in kwargs:
                 params['skiprows'] = kwargs.pop('skip_rows')
-            if 'header_row' in kwargs:
+            if 'header_row' in kwargs and not raw_import:
+                # Only use header_row if not in raw import mode
                 params['header'] = kwargs.pop('header_row')
+            elif 'header_row' in kwargs:
+                # Remove header_row from kwargs if in raw import mode
+                kwargs.pop('header_row')
             
             # Update with any additional parameters
             params.update(kwargs)
@@ -81,12 +88,22 @@ class CSVImporter(BaseImporter):
             # Try to read the file
             data = pd.read_csv(file_path, **params)
             
-            # Handle numeric conversion if requested
-            if convert_numeric:
+            # If raw import, generate meaningful column names
+            if raw_import:
+                data.columns = [f'Column_{i}' for i in range(len(data.columns))]
+            
+            # Enhanced automatic data type preservation
+            if raw_import or convert_numeric:
                 for col in data.columns:
                     if data[col].dtype == 'object':  # Text columns
-                        if handle_errors == 'coerce':
-                            # Convert to numeric, errors become NaN
+                        if raw_import:
+                            # For raw import, try automatic conversion but keep original if conversion fails
+                            numeric_version = pd.to_numeric(data[col], errors='ignore')
+                            # Only replace if conversion actually happened (not just returned original)
+                            if not numeric_version.equals(data[col]):
+                                data[col] = numeric_version
+                        elif convert_numeric and handle_errors == 'coerce':
+                            # Original logic for explicit convert_numeric requests
                             numeric_version = pd.to_numeric(data[col], errors='coerce')
                             # Only replace if we successfully converted most values
                             if numeric_version.notna().sum() > len(data) * 0.5:
@@ -106,12 +123,18 @@ class CSVImporter(BaseImporter):
             if len(numeric_cols) > 0:
                 stats['numeric_summary'] = data[numeric_cols].describe().to_dict()
             
+            # Create success message
+            import_mode = "raw import" if raw_import else "standard import"
+            success_message = f'Successfully imported {len(data)} rows and {len(data.columns)} columns using {import_mode}'
+            
             return {
                 'data': data,
                 'statistics': stats,
                 'metadata': self.get_metadata(file_path, data),
                 'success': True,
-                'message': f'Successfully imported {len(data)} rows and {len(data.columns)} columns'
+                'message': success_message,
+                'import_mode': import_mode,
+                'raw_import': raw_import
             }
             
         except Exception as e:
@@ -360,7 +383,7 @@ class DataImportManager:
         
         # Extract advanced import settings from kwargs
         advanced_settings = {}
-        for key in ['skip_rows', 'header_row', 'convert_numeric', 'handle_errors']:
+        for key in ['skip_rows', 'header_row', 'convert_numeric', 'handle_errors', 'raw_import']:
             if key in kwargs:
                 advanced_settings[key] = kwargs[key]
         

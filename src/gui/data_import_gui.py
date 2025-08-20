@@ -114,6 +114,12 @@ class DataImportGUI:
         ttk.Checkbutton(advanced_frame, text="Convert to numeric where possible", 
                        variable=self.convert_numeric_var).grid(row=1, column=0, columnspan=2, sticky="w", pady=5)
         
+        # Raw import option
+        self.raw_import_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(advanced_frame, text="Import entire file (ignore headers)", 
+                       variable=self.raw_import_var, 
+                       command=self.on_raw_import_toggle).grid(row=2, column=0, columnspan=2, sticky="w", pady=5)
+        
         self.handle_errors_var = tk.StringVar(value="coerce")
         ttk.Label(advanced_frame, text="Handle conversion errors:").grid(row=1, column=2, sticky="w", padx=5)
         error_combo = ttk.Combobox(advanced_frame, textvariable=self.handle_errors_var,
@@ -383,7 +389,8 @@ class DataImportGUI:
             data = result['data']
             
             # Show settings info
-            settings_text = f"Settings: Skip {skip_rows} rows, Header at row {header_row}, Convert numeric: {self.convert_numeric_var.get()}"
+            raw_import_text = ", Raw import: ON" if self.raw_import_var.get() else ""
+            settings_text = f"Settings: Skip {skip_rows} rows, Header at row {header_row}, Convert numeric: {self.convert_numeric_var.get()}{raw_import_text}"
             ttk.Label(self.preview_area, text=settings_text, font=("Arial", 9, "italic")).pack(anchor="w", pady=2)
             
             if hasattr(data, 'columns'):
@@ -457,6 +464,10 @@ class DataImportGUI:
         # Convert numeric
         ttk.Checkbutton(config_options, text="Convert to numeric where possible", 
                        variable=self.convert_numeric_var).grid(row=1, column=0, columnspan=2, sticky="w", pady=5)
+        
+        # Raw import option
+        ttk.Checkbutton(config_options, text="Import entire file (ignore headers)", 
+                       variable=self.raw_import_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=5)
         
         # Handle errors
         ttk.Label(config_options, text="Handle conversion errors:").grid(row=1, column=2, sticky="w", padx=10)
@@ -577,12 +588,21 @@ class DataImportGUI:
                 'reason': f"Detection failed: {str(e)}"
             }
     
+    def on_raw_import_toggle(self):
+        """Handle raw import toggle - disable header settings when enabled."""
+        if self.raw_import_var.get():
+            # Raw import enabled - disable header settings
+            self.header_row_var.set("0")
+            # You could disable the header row entry here if you have a reference to it
+        # When raw import is disabled, header settings remain enabled
+    
     def reset_import_settings(self):
         """Reset import settings to defaults."""
         self.skip_rows_var.set("0")
         self.header_row_var.set("0")
         self.convert_numeric_var.set(True)
         self.handle_errors_var.set("coerce")
+        self.raw_import_var.set(False)
     
     def import_with_settings(self, file_path, max_rows=None):
         """Import file with current advanced settings."""
@@ -592,59 +612,67 @@ class DataImportGUI:
             header_row = int(self.header_row_var.get()) if self.header_row_var.get().isdigit() else 0
             convert_numeric = self.convert_numeric_var.get()
             handle_errors = self.handle_errors_var.get()
+            raw_import = self.raw_import_var.get()
             
-            # Import with pandas directly for more control
-            import pandas as pd
+            # Use the DataImportManager for consistent import behavior
+            from src.data_processing.importers import DataImportManager
             
-            # Calculate actual header row (after skipping)
-            actual_header = skip_rows + header_row if skip_rows > 0 else header_row
+            import_manager = DataImportManager()
             
-            # Read file
-            kwargs = {
-                'skiprows': skip_rows,
-                'header': header_row,
+            # Prepare import settings
+            import_settings = {
+                'skip_rows': skip_rows,
+                'convert_numeric': convert_numeric,
+                'handle_errors': handle_errors,
+                'raw_import': raw_import
             }
             
+            # Only add header_row if not in raw import mode
+            if not raw_import:
+                import_settings['header_row'] = header_row
+            
+            # Add row limit for preview
             if max_rows:
-                kwargs['nrows'] = max_rows
+                import_settings['nrows'] = max_rows
             
-            data = pd.read_csv(file_path, **kwargs)
-            
-            # Convert numeric if requested
-            if convert_numeric:
-                for col in data.columns:
-                    if data[col].dtype == 'object':  # Text columns
-                        if handle_errors == 'coerce':
-                            # Convert to numeric, errors become NaN
-                            numeric_version = pd.to_numeric(data[col], errors='coerce')
-                            # Only replace if we successfully converted most values
-                            if numeric_version.notna().sum() > len(data) * 0.5:
-                                data[col] = numeric_version
-                        elif handle_errors == 'skip_row':
-                            # This would require more complex logic
-                            pass
-                        # 'keep_text' means do nothing
-            
-            return {
-                'success': True,
-                'data': data,
-                'message': f'Imported with skip_rows={skip_rows}, header={header_row}',
-                'statistics': {
-                    'row_count': len(data),
-                    'column_count': len(data.columns),
-                    'settings_applied': {
-                        'skip_rows': skip_rows,
-                        'header_row': header_row,
-                        'convert_numeric': convert_numeric
+            # Use the importer's preview method if available, otherwise import directly
+            if hasattr(import_manager, 'preview_file') and max_rows:
+                result = import_manager.preview_file(file_path, max_rows, **import_settings)
+            else:
+                # Get the appropriate importer and import directly
+                importer = import_manager.get_importer(file_path)
+                if importer:
+                    result = importer.import_file(file_path, **import_settings)
+                else:
+                    return {
+                        'success': False,
+                        'data': None,
+                        'message': f"No importer available for file: {file_path}",
+                        'statistics': None
                     }
+            
+            # Return the complete result structure that the calling code expects
+            if result['success']:
+                return {
+                    'success': True,
+                    'data': result['data'],
+                    'message': result['message'],
+                    'statistics': result.get('statistics', {})
                 }
-            }
+            else:
+                return {
+                    'success': False,
+                    'data': None,
+                    'message': result['message'],
+                    'statistics': None
+                }
             
         except Exception as e:
+            print(f"Import error: {str(e)}")
             return {
                 'success': False,
                 'data': None,
-                'message': str(e),
+                'message': f"Import failed: {str(e)}",
                 'statistics': None
             }
 
@@ -728,7 +756,8 @@ class DataImportGUI:
                         'skip_rows': int(self.skip_rows_var.get()) if self.skip_rows_var.get().isdigit() else 0,
                         'header_row': int(self.header_row_var.get()) if self.header_row_var.get().isdigit() else 0,
                         'convert_numeric': self.convert_numeric_var.get(),
-                        'handle_errors': self.handle_errors_var.get()
+                        'handle_errors': self.handle_errors_var.get(),
+                        'raw_import': self.raw_import_var.get()
                     },
                     'validation_result': test_result['statistics']
                 }

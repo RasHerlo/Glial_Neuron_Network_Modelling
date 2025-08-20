@@ -870,8 +870,40 @@ class DataBrowserGUI:
             
             import_manager = DataImportManager()
             
-            # Import the complete file (no row limit)
-            result = import_manager.import_file(file_path)
+            # Get stored import settings from dataset metadata (same logic as preview)
+            import_settings = {}
+            if self.selected_dataset and self.selected_dataset.metadata:
+                metadata = self.selected_dataset.metadata
+                stored_settings = {}
+                
+                # Handle different metadata types (dict, bytes, or string) for backward compatibility
+                try:
+                    if isinstance(metadata, dict):
+                        # Metadata is already a dict (new format with working JSON adapter)
+                        stored_settings = metadata.get('import_settings', {})
+                    elif isinstance(metadata, (bytes, str)):
+                        # Metadata is bytes or string (legacy format or broken JSON adapter)
+                        import json
+                        if isinstance(metadata, bytes):
+                            metadata = metadata.decode('utf-8')
+                        parsed_metadata = json.loads(metadata)
+                        stored_settings = parsed_metadata.get('import_settings', {})
+                    else:
+                        # Unknown metadata type, skip
+                        stored_settings = {}
+                except (json.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
+                    # If parsing fails, log and continue without import settings
+                    print(f"Warning: Could not parse dataset metadata: {e}")
+                    stored_settings = {}
+                
+                # Extract the settings we need for full file import
+                if isinstance(stored_settings, dict):
+                    for key in ['skip_rows', 'header_row', 'convert_numeric', 'handle_errors', 'raw_import']:
+                        if key in stored_settings:
+                            import_settings[key] = stored_settings[key]
+            
+            # Import the complete file (no row limit) with stored settings
+            result = import_manager.import_file(file_path, **import_settings)
             
             if not result['success']:
                 return f"Error loading full file: {result['message']}"
@@ -988,7 +1020,7 @@ class DataBrowserGUI:
             
             # Extract the settings we need for preview
             if isinstance(stored_settings, dict):
-                for key in ['skip_rows', 'header_row', 'convert_numeric', 'handle_errors']:
+                for key in ['skip_rows', 'header_row', 'convert_numeric', 'handle_errors', 'raw_import']:
                     if key in stored_settings:
                         import_settings[key] = stored_settings[key]
         
