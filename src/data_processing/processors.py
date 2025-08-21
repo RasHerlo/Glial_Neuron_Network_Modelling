@@ -20,9 +20,14 @@ class BaseProcessor:
         self.description = ""
         self.parameters = {}
     
-    def process(self, data: Any, parameters: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Process data. Should be implemented by subclasses."""
+    def process_with_progress(self, parameters: Dict[str, Any] = None, 
+                            progress_callback: Callable[[float], None] = None) -> Dict[str, Any]:
+        """Process with processor-specific progress updates. Should be implemented by subclasses."""
         raise NotImplementedError
+    
+    def get_progress_steps(self) -> List[str]:
+        """Return list of progress step descriptions for this processor."""
+        return ["Processing..."]
     
     def validate_parameters(self, parameters: Dict[str, Any]) -> bool:
         """Validate processing parameters."""
@@ -50,6 +55,17 @@ class MatrixExtractionProcessor(BaseProcessor):
             'transpose_matrix': False,
             'auto_detect': False
         }
+    
+    def get_progress_steps(self) -> List[str]:
+        """Return progress step descriptions for Matrix Extraction."""
+        return [
+            "Loading dataset file",
+            "Parsing matrix ranges", 
+            "Extracting matrix data",
+            "Extracting labels",
+            "Saving matrix files",
+            "Completed"
+        ]
     
     def _excel_column_to_index(self, col_str: str) -> int:
         """Convert Excel column (A, B, AA, etc.) to 0-based index."""
@@ -253,12 +269,45 @@ class MatrixExtractionProcessor(BaseProcessor):
                 'message': f'Preview generation failed: {str(e)}'
             }
     
-    def process(self, data: pd.DataFrame, parameters: Dict[str, Any] = None) -> Dict[str, Any]:
+    def process_with_progress(self, parameters: Dict[str, Any] = None, 
+                            progress_callback: Callable[[float], None] = None) -> Dict[str, Any]:
         """Process the dataset and extract matrix with labels."""
         if parameters is None:
             parameters = self.get_default_parameters()
         
+        def update_progress(percent: float):
+            if progress_callback:
+                progress_callback(percent)
+        
         try:
+            # Step 1: Load dataset file (10%)
+            update_progress(10.0)
+            dataset_path = parameters.get('dataset_path')
+            dataset_format = parameters.get('dataset_format')
+            
+            if not dataset_path:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': 'Dataset path not provided'
+                }
+            
+            # Load data based on file format
+            if dataset_format == 'csv':
+                data = pd.read_csv(dataset_path, header=None)
+            elif dataset_format in ['xlsx', 'xls']:
+                data = pd.read_excel(dataset_path, header=None)
+            else:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Unsupported file format: {dataset_format}'
+                }
+            
+            # Step 2: Parse matrix ranges (25%)
+            update_progress(25.0)
             # Get parameters
             auto_detect = parameters.get('auto_detect', False)
             matrix_range = parameters.get('matrix_range', 'B3:AJW1217')
@@ -279,8 +328,12 @@ class MatrixExtractionProcessor(BaseProcessor):
                 col_indices = self._parse_excel_range(col_labels_range)
                 row_indices = self._parse_excel_range(row_labels_range)
             
-            # Extract data
+            # Step 3: Extract matrix data (50%)
+            update_progress(50.0)
             matrix = self._extract_matrix_data(data, matrix_indices)
+            
+            # Step 4: Extract labels (70%)
+            update_progress(70.0)
             col_labels = self._extract_labels(data, col_indices)
             row_labels = self._extract_labels(data, row_indices)
             
@@ -299,10 +352,9 @@ class MatrixExtractionProcessor(BaseProcessor):
             if nan_count > 0:
                 print(f"Warning: {nan_count} non-numeric values were converted to NaN")
             
-            # Dataset name should be passed from the manager
+            # Step 5: Save matrix files (90%)
+            update_progress(90.0)
             dataset_name = parameters.get('dataset_name', 'unknown_dataset')
-            
-            # Save files
             output_dir = self._save_matrix_files(matrix, row_labels, col_labels, dataset_name, matrix_name)
             
             # Calculate statistics
@@ -320,6 +372,9 @@ class MatrixExtractionProcessor(BaseProcessor):
                     f"{matrix_name}_column_labels.csv"
                 ]
             }
+            
+            # Step 6: Completed (100%)
+            update_progress(100.0)
             
             return {
                 'success': True,
@@ -352,6 +407,16 @@ class MatrixModificationProcessor(BaseProcessor):
             'output_filename': '',  # Will be auto-generated based on matrix + operation
             'fileformat': '.npy'
         }
+    
+    def get_progress_steps(self) -> List[str]:
+        """Return progress step descriptions for Matrix Modification."""
+        return [
+            "Validating matrix file",
+            "Loading matrix data",
+            "Applying operation",
+            "Saving modified matrix",
+            "Completed"
+        ]
     
     def get_available_operations(self) -> List[str]:
         """Get list of available matrix operations."""
@@ -405,12 +470,19 @@ class MatrixModificationProcessor(BaseProcessor):
         
         return (matrix_data - row_min) / row_range
     
-    def process(self, data: Any, parameters: Dict[str, Any] = None) -> Dict[str, Any]:
+    def process_with_progress(self, parameters: Dict[str, Any] = None, 
+                            progress_callback: Callable[[float], None] = None) -> Dict[str, Any]:
         """Process the matrix with the specified operation."""
         if parameters is None:
             parameters = self.get_default_parameters()
         
+        def update_progress(percent: float):
+            if progress_callback:
+                progress_callback(percent)
+        
         try:
+            # Step 1: Validate matrix file (20%)
+            update_progress(20.0)
             # Get parameters
             matrix_name = parameters.get('matrix')
             operation = parameters.get('operation', 'Z-scoring')
@@ -438,7 +510,8 @@ class MatrixModificationProcessor(BaseProcessor):
                     'message': f'Matrix file not found: {matrix_file_path}'
                 }
             
-            # Load matrix
+            # Step 2: Load matrix data (40%)
+            update_progress(40.0)
             matrix_data = np.load(matrix_file_path)
             
             # Validate matrix is 2D
@@ -450,7 +523,8 @@ class MatrixModificationProcessor(BaseProcessor):
                     'message': f'Matrix must be 2D, got shape: {matrix_data.shape}'
                 }
             
-            # Apply operation
+            # Step 3: Apply operation (60%)
+            update_progress(60.0)
             if operation == 'Z-scoring':
                 modified_matrix = self.apply_zscore_rowwise(matrix_data)
                 operation_desc = "Z-score normalization (row-wise)"
@@ -469,7 +543,8 @@ class MatrixModificationProcessor(BaseProcessor):
             if not output_filename:
                 output_filename = self.generate_output_filename(matrix_name, operation)
             
-            # Create output directory
+            # Step 4: Save modified matrix (80%)
+            update_progress(80.0)
             output_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
             os.makedirs(output_dir, exist_ok=True)
             
@@ -509,6 +584,9 @@ class MatrixModificationProcessor(BaseProcessor):
                 'output_format': fileformat
             }
             
+            # Step 5: Completed (100%)
+            update_progress(100.0)
+            
             return {
                 'success': True,
                 'data': modified_matrix,
@@ -546,39 +624,15 @@ class DataProcessingManager:
     def process_dataset(self, dataset_id: int, processor_name: str, job_name: str,
                        parameters: Dict[str, Any] = None, 
                        progress_callback: Callable[[float], None] = None) -> Dict[str, Any]:
-        """Process a dataset with specified processor and save results."""
+        """Process a dataset with specified processor."""
         try:
-            # Update progress
-            if progress_callback:
-                progress_callback(10.0)
-            
-            # Get dataset
+            # Get dataset information
             dataset = DatasetOperations.get_dataset(dataset_id)
             if not dataset:
                 return {
                     'success': False,
                     'message': f'Dataset with ID {dataset_id} not found'
                 }
-            
-            # Update progress
-            if progress_callback:
-                progress_callback(20.0)
-            
-            # Load data (this would need to be implemented based on file format)
-            # Load CSV files without headers to match GUI preview behavior
-            if dataset.file_format == 'csv':
-                data = pd.read_csv(dataset.file_path, header=None)
-            elif dataset.file_format in ['xlsx', 'xls']:
-                data = pd.read_excel(dataset.file_path, header=None)
-            else:
-                return {
-                    'success': False,
-                    'message': f'Unsupported file format: {dataset.file_format}'
-                }
-            
-            # Update progress
-            if progress_callback:
-                progress_callback(40.0)
             
             # Get processor
             processor = self.get_processor(processor_name)
@@ -588,37 +642,16 @@ class DataProcessingManager:
                     'message': f'Processor "{processor_name}" not found'
                 }
             
-            # Update progress
-            if progress_callback:
-                progress_callback(50.0)
-            
-            # Add dataset name to parameters for matrix extraction
+            # Prepare parameters with dataset information
             if parameters is None:
                 parameters = {}
             parameters['dataset_name'] = dataset.name
+            parameters['dataset_path'] = dataset.file_path
+            parameters['dataset_format'] = dataset.file_format
+            parameters['job_name'] = job_name
             
-            # Process data
-            result = processor.process(data, parameters)
-            
-            # Update progress
-            if progress_callback:
-                progress_callback(80.0)
-            
-            if result['success']:
-                # Save processed data
-                output_dir = "data/processed"
-                os.makedirs(output_dir, exist_ok=True)
-                
-                output_filename = f"{job_name}_{dataset.name}_processed.csv"
-                output_path = os.path.join(output_dir, output_filename)
-                
-                if result['data'] is not None:
-                    result['data'].to_csv(output_path, index=False)
-                    result['output_path'] = output_path
-                
-                # Update progress
-                if progress_callback:
-                    progress_callback(100.0)
+            # Let processor handle everything including progress
+            result = processor.process_with_progress(parameters, progress_callback)
             
             return result
             
