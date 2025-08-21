@@ -30,81 +30,23 @@ except ImportError:
 class FigureGenerationGUI:
     """GUI for figure generation functionality."""
     
-    # Mode definitions with file requirements
-    EXPLORATION_MODES = {
-        "Raw Data View": {
-            "description": "Basic visualization of raw data",
-            "plot_types": ["line", "scatter", "histogram"],
-            "file_types": [".csv", ".txt", ".xlsx"],
+    # Mode definitions - will be populated with custom modes
+    # This dictionary will store mode configurations as they are added
+    MODE_DEFINITIONS = {
+        "RasterPlot": {
+            "description": "Visualize raster matrix data with customizable labels and colormaps",
+            "file_types": [".npy", ".csv"],
             "required_files": [
-                {"name": "data_file", "label": "Data File", "description": "Primary data file to visualize"}
-            ]
-        },
-        "Statistical Overview": {
-            "description": "Statistical summaries and distributions", 
-            "plot_types": ["histogram", "box_plot", "violin_plot", "correlation_matrix"],
-            "file_types": [".csv", ".txt", ".xlsx"],
-            "required_files": [
-                {"name": "data_file", "label": "Data File", "description": "Data file for statistical analysis"}
-            ]
-        },
-        "Time Series Analysis": {
-            "description": "Time-based data analysis",
-            "plot_types": ["line", "area", "step"],
-            "file_types": [".csv", ".txt", ".xlsx"],
-            "required_files": [
-                {"name": "time_series_file", "label": "Time Series Data", "description": "File containing time series data"}
-            ]
-        }
-    }
-    
-    MATRIX_MODES = {
-        "Heatmap Visualization": {
-            "description": "2D heatmap representation",
-            "plot_types": ["heatmap", "clustermap"],
-            "file_types": [".npy", ".npz", ".csv"],
-            "required_files": [
-                {"name": "matrix_file", "label": "Matrix File", "description": "Matrix data file for heatmap"}
-            ]
-        },
-        "Principal Component Analysis": {
-            "description": "PCA visualization and analysis",
-            "plot_types": ["scatter", "biplot", "scree_plot"],
-            "file_types": [".npy", ".npz", ".csv"],
-            "required_files": [
-                {"name": "data_matrix", "label": "Data Matrix", "description": "Matrix file for PCA analysis"}
-            ]
-        },
-        "Network Analysis": {
-            "description": "Network/connectivity analysis",
-            "plot_types": ["network_graph", "adjacency_matrix", "degree_distribution"],
-            "file_types": [".npy", ".npz", ".csv"],
-            "required_files": [
-                {"name": "adjacency_matrix", "label": "Adjacency Matrix", "description": "Network adjacency matrix"},
-                {"name": "node_labels", "label": "Node Labels (Optional)", "description": "Optional file with node labels", "optional": True}
-            ]
-        }
-    }
-    
-    COMPARISON_MODES = {
-        "Multi-File Comparison": {
-            "description": "Compare multiple files from same dataset",
-            "plot_types": ["overlay", "subplot_grid", "difference_plot"],
-            "file_types": [".csv", ".npy", ".txt"],
-            "required_files": [
-                {"name": "primary_file", "label": "Primary File", "description": "First file for comparison"},
-                {"name": "comparison_file", "label": "Comparison File", "description": "Second file for comparison"},
-                {"name": "additional_files", "label": "Additional Files (Optional)", "description": "Additional files for multi-comparison", "optional": True, "multiple": True}
-            ]
-        },
-        "Before/After Analysis": {
-            "description": "Compare raw vs processed data",
-            "plot_types": ["side_by_side", "overlay", "difference_heatmap"],
-            "file_types": [".csv", ".npy", ".txt"],
-            "required_files": [
-                {"name": "raw_file", "label": "Raw Data File", "description": "Original/raw data file"},
-                {"name": "processed_file", "label": "Processed Data File", "description": "Processed/modified data file"}
-            ]
+                {"name": "raster_matrix", "label": "Raster", "description": "Raster matrix file (.npy)", "pattern": "Raster_matrix*", "extension": ".npy"},
+                {"name": "row_labels", "label": "Row Labels", "description": "Row labels file (.csv)", "pattern": "*row_labels", "extension": ".csv", "optional": True},
+                {"name": "column_labels", "label": "Column Labels", "description": "Column labels file (.csv)", "pattern": "*column_labels", "extension": ".csv", "optional": True}
+            ],
+            "controls": {
+                "colormap": ["binary", "jet", "viridis", "gist_earth"],
+                "row_title_default": "Neurons",
+                "column_title_default": "Time",
+                "label_count_default": 6
+            }
         }
     }
     
@@ -511,10 +453,8 @@ class FigureGenerationGUI:
     
     def load_all_modes(self):
         """Load all available modes for the inspection tab."""
-        all_modes = []
-        all_modes.extend(list(self.EXPLORATION_MODES.keys()))
-        all_modes.extend(list(self.MATRIX_MODES.keys()))
-        all_modes.extend(list(self.COMPARISON_MODES.keys()))
+        # Get all available modes from MODE_DEFINITIONS
+        all_modes = list(self.MODE_DEFINITIONS.keys())
         
         self.inspection_mode_combo['values'] = all_modes
     
@@ -538,18 +478,29 @@ class FigureGenerationGUI:
         # Clear existing widgets
         self.clear_required_files_section()
         
-        # Get mode configuration
-        mode_config = None
-        if mode in self.EXPLORATION_MODES:
-            mode_config = self.EXPLORATION_MODES[mode]
-        elif mode in self.MATRIX_MODES:
-            mode_config = self.MATRIX_MODES[mode]
-        elif mode in self.COMPARISON_MODES:
-            mode_config = self.COMPARISON_MODES[mode]
+        # Get mode configuration from MODE_DEFINITIONS
+        if mode not in self.MODE_DEFINITIONS:
+            # Show message that mode is not configured yet
+            info_label = ttk.Label(self.file_requirements_container, 
+                                 text=f"Mode '{mode}' is not configured yet.\nFile requirements will be defined when the mode is implemented.",
+                                 font=("Arial", 10), foreground="gray", justify="center")
+            info_label.pack(pady=20)
+            return
+        
+        mode_config = self.MODE_DEFINITIONS[mode]
         
         if not mode_config or 'required_files' not in mode_config:
             return
         
+        # Handle RasterPlot mode specifically
+        if mode == "RasterPlot":
+            self.create_rasterplot_file_widgets(mode_config)
+        else:
+            # Generic file widgets for other modes
+            self.create_generic_file_widgets(mode_config)
+    
+    def create_generic_file_widgets(self, mode_config):
+        """Create generic file selection widgets."""
         # Create widgets for each required file
         for i, file_req in enumerate(mode_config['required_files']):
             file_frame = ttk.Frame(self.file_requirements_container)
@@ -589,16 +540,147 @@ class FigureGenerationGUI:
                 'config': file_req
             }
     
-    def filter_files_by_type(self, allowed_extensions):
-        """Filter available files by allowed extensions."""
+    def create_rasterplot_file_widgets(self, mode_config):
+        """Create RasterPlot-specific file selection widgets."""
+        # Initialize RasterPlot-specific variables
+        self.raster_row_labels_enabled = tk.BooleanVar(value=True)
+        self.raster_row_label_count = tk.StringVar(value=str(mode_config['controls']['label_count_default']))
+        self.raster_row_title = tk.StringVar(value=mode_config['controls']['row_title_default'])
+        
+        self.raster_column_labels_enabled = tk.BooleanVar(value=True)
+        self.raster_column_label_count = tk.StringVar(value=str(mode_config['controls']['label_count_default']))
+        self.raster_column_title = tk.StringVar(value=mode_config['controls']['column_title_default'])
+        
+        # Raster Matrix selection
+        raster_frame = ttk.Frame(self.file_requirements_container)
+        raster_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(raster_frame, text="Raster:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        raster_var = tk.StringVar()
+        raster_combo = ttk.Combobox(raster_frame, textvariable=raster_var, state="readonly", width=40)
+        raster_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Filter for Raster_matrix* .npy files
+        if hasattr(self, 'available_files'):
+            raster_files = self.filter_files_by_type([".npy"], "Raster_matrix*")
+            raster_combo['values'] = raster_files
+        
+        raster_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Store reference
+        self.file_selection_widgets['raster_matrix'] = {
+            'var': raster_var,
+            'combo': raster_combo,
+            'frame': raster_frame,
+            'config': mode_config['required_files'][0]
+        }
+        
+        # Row Labels section
+        row_labels_frame = ttk.Frame(self.file_requirements_container)
+        row_labels_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(row_labels_frame, text="Row Labels:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        row_labels_var = tk.StringVar()
+        row_labels_combo = ttk.Combobox(row_labels_frame, textvariable=row_labels_var, state="readonly", width=30)
+        row_labels_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Filter for *row_labels .csv files
+        if hasattr(self, 'available_files'):
+            row_label_files = self.filter_files_by_type([".csv"], "*row_labels")
+            row_labels_combo['values'] = row_label_files
+        
+        row_labels_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Checkbox for row labels
+        ttk.Checkbutton(row_labels_frame, variable=self.raster_row_labels_enabled, 
+                       command=self.update_inspection_figure).grid(row=0, column=2, padx=5)
+        
+        # Number input for row label count
+        row_count_entry = ttk.Entry(row_labels_frame, textvariable=self.raster_row_label_count, width=5)
+        row_count_entry.grid(row=0, column=3, padx=2)
+        row_count_entry.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        # Row title input
+        row_title_frame = ttk.Frame(self.file_requirements_container)
+        row_title_frame.pack(fill="x", pady=2)
+        ttk.Label(row_title_frame, text="Row Title:").grid(row=0, column=0, sticky="w", padx=5)
+        row_title_entry = ttk.Entry(row_title_frame, textvariable=self.raster_row_title, width=20)
+        row_title_entry.grid(row=0, column=1, padx=5, pady=2)
+        row_title_entry.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        # Store reference
+        self.file_selection_widgets['row_labels'] = {
+            'var': row_labels_var,
+            'combo': row_labels_combo,
+            'frame': row_labels_frame,
+            'config': mode_config['required_files'][1]
+        }
+        
+        # Column Labels section
+        column_labels_frame = ttk.Frame(self.file_requirements_container)
+        column_labels_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(column_labels_frame, text="Column Labels:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        column_labels_var = tk.StringVar()
+        column_labels_combo = ttk.Combobox(column_labels_frame, textvariable=column_labels_var, state="readonly", width=30)
+        column_labels_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Filter for *column_labels .csv files
+        if hasattr(self, 'available_files'):
+            column_label_files = self.filter_files_by_type([".csv"], "*column_labels")
+            column_labels_combo['values'] = column_label_files
+        
+        column_labels_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Checkbox for column labels
+        ttk.Checkbutton(column_labels_frame, variable=self.raster_column_labels_enabled,
+                       command=self.update_inspection_figure).grid(row=0, column=2, padx=5)
+        
+        # Number input for column label count
+        column_count_entry = ttk.Entry(column_labels_frame, textvariable=self.raster_column_label_count, width=5)
+        column_count_entry.grid(row=0, column=3, padx=2)
+        column_count_entry.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        # Column title input
+        column_title_frame = ttk.Frame(self.file_requirements_container)
+        column_title_frame.pack(fill="x", pady=2)
+        ttk.Label(column_title_frame, text="Column Title:").grid(row=0, column=0, sticky="w", padx=5)
+        column_title_entry = ttk.Entry(column_title_frame, textvariable=self.raster_column_title, width=20)
+        column_title_entry.grid(row=0, column=1, padx=5, pady=2)
+        column_title_entry.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        # Store reference
+        self.file_selection_widgets['column_labels'] = {
+            'var': column_labels_var,
+            'combo': column_labels_combo,
+            'frame': column_labels_frame,
+            'config': mode_config['required_files'][2]
+        }
+    
+    def filter_files_by_type(self, allowed_extensions, pattern=None):
+        """Filter available files by allowed extensions and optional pattern."""
         if not hasattr(self, 'available_files'):
             return []
         
         filtered_files = []
         for file_path in self.available_files:
             file_ext = os.path.splitext(file_path)[1].lower()
-            if file_ext in allowed_extensions:
-                filtered_files.append(file_path)
+            filename = os.path.basename(file_path)
+            
+            # Check extension
+            if file_ext not in allowed_extensions:
+                continue
+                
+            # Check pattern if provided
+            if pattern:
+                import fnmatch
+                if not fnmatch.fnmatch(filename, pattern + file_ext):
+                    continue
+            
+            filtered_files.append(file_path)
         
         return filtered_files
     
@@ -614,6 +696,12 @@ class FigureGenerationGUI:
     
     def validate_required_files(self):
         """Validate that all required (non-optional) files are selected."""
+        # For RasterPlot, only raster_matrix is required
+        mode = self.inspection_mode_var.get()
+        if mode == "RasterPlot":
+            return 'raster_matrix' in self.file_selection_widgets and self.file_selection_widgets['raster_matrix']['var'].get()
+        
+        # For other modes, check all non-optional files
         for file_name, widget_info in self.file_selection_widgets.items():
             if not widget_info['config'].get('optional', False):
                 if not widget_info['var'].get():
@@ -665,111 +753,50 @@ class FigureGenerationGUI:
     
     def create_mode_controls(self, mode):
         """Create controls specific to the selected mode."""
-        if mode in self.EXPLORATION_MODES:
-            self.create_exploration_controls(mode)
-        elif mode in self.MATRIX_MODES:
-            self.create_matrix_controls(mode)
-        elif mode in self.COMPARISON_MODES:
-            self.create_comparison_controls(mode)
+        if mode not in self.MODE_DEFINITIONS:
+            # Show placeholder for unconfigured modes
+            placeholder_frame = ttk.LabelFrame(self.mode_controls_frame, text=f"{mode} Controls", padding=5)
+            placeholder_frame.pack(fill="x", pady=5)
+            
+            placeholder_label = ttk.Label(placeholder_frame, 
+                                        text=f"Controls for '{mode}' will be implemented when the mode is configured.",
+                                        font=("Arial", 10), foreground="gray")
+            placeholder_label.pack(pady=10)
+            return
+        
+        # Mode-specific controls will be implemented based on MODE_DEFINITIONS
+        mode_config = self.MODE_DEFINITIONS[mode]
+        self.create_custom_mode_controls(mode, mode_config)
     
-    def create_exploration_controls(self, mode):
-        """Create controls for exploration modes."""
+    def create_custom_mode_controls(self, mode, mode_config):
+        """Create controls for custom modes based on their configuration."""
         frame = ttk.LabelFrame(self.mode_controls_frame, text=f"{mode} Controls", padding=5)
         frame.pack(fill="x", pady=5)
         
-        if mode == "Raw Data View":
-            # Plot type selection
-            ttk.Label(frame, text="Plot Type:").grid(row=0, column=0, sticky="w", padx=5)
-            self.plot_type_var = tk.StringVar(value="line")
-            plot_combo = ttk.Combobox(frame, textvariable=self.plot_type_var,
-                                    values=["line", "scatter", "histogram"], state="readonly")
-            plot_combo.grid(row=0, column=1, padx=5)
-            plot_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
-            
-            # Column selection (will be populated when data is loaded)
-            ttk.Label(frame, text="Columns:").grid(row=0, column=2, sticky="w", padx=5)
-            self.column_listbox = tk.Listbox(frame, selectmode='multiple', height=3, width=20)
-            self.column_listbox.grid(row=0, column=3, padx=5)
-            self.column_listbox.bind('<<ListboxSelect>>', lambda e: self.update_inspection_figure())
-            
-        elif mode == "Statistical Overview":
-            # Statistics type
-            ttk.Label(frame, text="Analysis:").grid(row=0, column=0, sticky="w", padx=5)
-            self.stats_type_var = tk.StringVar(value="histogram")
-            stats_combo = ttk.Combobox(frame, textvariable=self.stats_type_var,
-                                     values=["histogram", "box_plot", "correlation_matrix"], state="readonly")
-            stats_combo.grid(row=0, column=1, padx=5)
-            stats_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
-            
-        elif mode == "Time Series Analysis":
-            # Time column selection
-            ttk.Label(frame, text="Time Column:").grid(row=0, column=0, sticky="w", padx=5)
-            self.time_column_var = tk.StringVar()
-            self.time_column_combo = ttk.Combobox(frame, textvariable=self.time_column_var, state="readonly")
-            self.time_column_combo.grid(row=0, column=1, padx=5)
-            self.time_column_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
-            
-            # Plot style
-            ttk.Label(frame, text="Style:").grid(row=0, column=2, sticky="w", padx=5)
-            self.ts_style_var = tk.StringVar(value="line")
-            style_combo = ttk.Combobox(frame, textvariable=self.ts_style_var,
-                                     values=["line", "area", "step"], state="readonly")
-            style_combo.grid(row=0, column=3, padx=5)
-            style_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
+        if mode == "RasterPlot":
+            self.create_rasterplot_controls(frame, mode_config)
+        else:
+            # Placeholder for other custom modes
+            placeholder_label = ttk.Label(frame, 
+                                        text=f"Custom controls for '{mode}' will be implemented based on mode configuration.",
+                                        font=("Arial", 10), foreground="gray")
+            placeholder_label.pack(pady=10)
     
-    def create_matrix_controls(self, mode):
-        """Create controls for matrix analysis modes."""
-        frame = ttk.LabelFrame(self.mode_controls_frame, text=f"{mode} Controls", padding=5)
-        frame.pack(fill="x", pady=5)
+    def create_rasterplot_controls(self, parent_frame, mode_config):
+        """Create RasterPlot-specific controls."""
+        # Initialize colormap variable
+        self.raster_colormap = tk.StringVar(value=mode_config['controls']['colormap'][0])
         
-        if mode == "Heatmap Visualization":
-            # Colormap selection
-            ttk.Label(frame, text="Colormap:").grid(row=0, column=0, sticky="w", padx=5)
-            self.colormap_var = tk.StringVar(value="viridis")
-            colormap_combo = ttk.Combobox(frame, textvariable=self.colormap_var,
-                                        values=["viridis", "plasma", "coolwarm", "RdYlBu", "hot"], state="readonly")
-            colormap_combo.grid(row=0, column=1, padx=5)
-            colormap_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
-            
-            # Normalization
-            ttk.Label(frame, text="Normalization:").grid(row=0, column=2, sticky="w", padx=5)
-            self.norm_var = tk.StringVar(value="none")
-            norm_combo = ttk.Combobox(frame, textvariable=self.norm_var,
-                                    values=["none", "row", "column", "z-score"], state="readonly")
-            norm_combo.grid(row=0, column=3, padx=5)
-            norm_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
-            
-        elif mode == "Principal Component Analysis":
-            # Number of components
-            ttk.Label(frame, text="Components:").grid(row=0, column=0, sticky="w", padx=5)
-            self.n_components_var = tk.StringVar(value="2")
-            ttk.Entry(frame, textvariable=self.n_components_var, width=10).grid(row=0, column=1, padx=5)
-            
-            # Plot type
-            ttk.Label(frame, text="Plot Type:").grid(row=0, column=2, sticky="w", padx=5)
-            self.pca_plot_var = tk.StringVar(value="scatter")
-            pca_combo = ttk.Combobox(frame, textvariable=self.pca_plot_var,
-                                   values=["scatter", "biplot", "scree_plot"], state="readonly")
-            pca_combo.grid(row=0, column=3, padx=5)
-            pca_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
+        # Colormap selection
+        ttk.Label(parent_frame, text="Colormap:").grid(row=0, column=0, sticky="w", padx=5)
+        colormap_combo = ttk.Combobox(parent_frame, textvariable=self.raster_colormap,
+                                    values=mode_config['controls']['colormap'], state="readonly", width=15)
+        colormap_combo.grid(row=0, column=1, padx=5, pady=2)
+        colormap_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
     
-    def create_comparison_controls(self, mode):
-        """Create controls for comparison modes."""
-        frame = ttk.LabelFrame(self.mode_controls_frame, text=f"{mode} Controls", padding=5)
-        frame.pack(fill="x", pady=5)
-        
-        # Comparison type selection
-        ttk.Label(frame, text="Comparison Type:").grid(row=0, column=0, sticky="w", padx=5)
-        self.comparison_type_var = tk.StringVar(value="overlay")
-        comparison_combo = ttk.Combobox(frame, textvariable=self.comparison_type_var,
-                                      values=["overlay", "side_by_side", "difference"], state="readonly")
-        comparison_combo.grid(row=0, column=1, padx=5)
-        comparison_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
-        
-        # Note about file selection
-        note_label = ttk.Label(frame, text="Files are selected in the 'Required Files' section above", 
-                             font=("Arial", 8), foreground="gray")
-        note_label.grid(row=1, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+
+    
+
     
     def load_and_display_data(self):
         """Load the selected file and display initial figure."""
@@ -831,22 +858,9 @@ class FigureGenerationGUI:
         if self.current_data is None:
             return
         
-        columns = list(self.current_data.columns)
-        
-        # Update column listbox for Raw Data View
-        if hasattr(self, 'column_listbox'):
-            self.column_listbox.delete(0, tk.END)
-            for col in columns:
-                self.column_listbox.insert(tk.END, str(col))
-            # Select first few columns by default
-            for i in range(min(3, len(columns))):
-                self.column_listbox.selection_set(i)
-        
-        # Update time column combo for Time Series Analysis
-        if hasattr(self, 'time_column_combo'):
-            self.time_column_combo['values'] = columns
-            if columns:
-                self.time_column_var.set(columns[0])
+        # This method will be expanded when custom modes with column controls are implemented
+        # For now, it's a placeholder that can be used by custom modes
+        pass
     
     def update_inspection_figure(self):
         """Update the inspection figure based on current mode and parameters."""
@@ -859,19 +873,14 @@ class FigureGenerationGUI:
             
             mode = self.inspection_mode_var.get()
             
-            # Generate figure based on mode
-            if mode == "Raw Data View":
-                self.generate_raw_data_plot()
-            elif mode == "Statistical Overview":
-                self.generate_statistical_plot()
-            elif mode == "Time Series Analysis":
-                self.generate_time_series_plot()
-            elif mode == "Heatmap Visualization":
-                self.generate_heatmap_plot()
-            elif mode == "Principal Component Analysis":
-                self.generate_pca_plot()
-            elif mode in self.COMPARISON_MODES:
-                self.generate_comparison_plot()
+            # Generate figure based on mode configuration
+            if mode in self.MODE_DEFINITIONS:
+                self.generate_custom_mode_figure(mode)
+            else:
+                # Show placeholder for unconfigured modes
+                self.inspection_ax.text(0.5, 0.5, f"Figure generation for '{mode}' will be implemented\nwhen the mode is configured.", 
+                                      ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                      fontsize=12, alpha=0.7)
             
             # Apply common formatting
             title = self.inspection_title_var.get()
@@ -893,312 +902,151 @@ class FigureGenerationGUI:
             self.figure_canvas.draw()
             print(f"Error updating figure: {e}")
     
-    def generate_raw_data_plot(self):
-        """Generate plot for Raw Data View mode."""
-        if not hasattr(self, 'plot_type_var') or not hasattr(self, 'column_listbox'):
-            return
+    def generate_custom_mode_figure(self, mode):
+        """Generate figure for custom modes based on their configuration."""
+        mode_config = self.MODE_DEFINITIONS[mode]
         
-        plot_type = self.plot_type_var.get()
-        selected_indices = self.column_listbox.curselection()
-        
-        if not selected_indices:
-            self.inspection_ax.text(0.5, 0.5, 'Please select columns to plot', 
-                                  ha='center', va='center', transform=self.inspection_ax.transAxes)
-            return
-        
-        selected_columns = [self.column_listbox.get(i) for i in selected_indices]
-        
-        if plot_type == "line":
-            for col in selected_columns:
-                if col in self.current_data.columns:
-                    self.inspection_ax.plot(self.current_data[col], label=col)
-            self.inspection_ax.legend()
-            self.inspection_ax.set_ylabel("Value")
-            self.inspection_ax.set_xlabel("Index")
-            
-        elif plot_type == "scatter":
-            if len(selected_columns) >= 2:
-                x_col, y_col = selected_columns[0], selected_columns[1]
-                self.inspection_ax.scatter(self.current_data[x_col], self.current_data[y_col])
-                self.inspection_ax.set_xlabel(x_col)
-                self.inspection_ax.set_ylabel(y_col)
-            else:
-                self.inspection_ax.text(0.5, 0.5, 'Select at least 2 columns for scatter plot', 
-                                      ha='center', va='center', transform=self.inspection_ax.transAxes)
-                
-        elif plot_type == "histogram":
-            for i, col in enumerate(selected_columns):
-                if col in self.current_data.columns:
-                    self.inspection_ax.hist(self.current_data[col], alpha=0.7, label=col, bins=30)
-            self.inspection_ax.legend()
-            self.inspection_ax.set_ylabel("Frequency")
-            self.inspection_ax.set_xlabel("Value")
+        if mode == "RasterPlot":
+            self.generate_rasterplot_figure()
+        else:
+            # Placeholder for other custom modes
+            self.inspection_ax.text(0.5, 0.5, f"Figure generation for '{mode}' mode\nwill be implemented based on:\n\n{mode_config.get('description', 'No description available')}", 
+                                  ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                  fontsize=12, alpha=0.7)
     
-    def generate_statistical_plot(self):
-        """Generate plot for Statistical Overview mode."""
-        if not hasattr(self, 'stats_type_var'):
-            return
-        
-        stats_type = self.stats_type_var.get()
-        numeric_columns = self.current_data.select_dtypes(include=[np.number]).columns
-        
-        if len(numeric_columns) == 0:
-            self.inspection_ax.text(0.5, 0.5, 'No numeric columns found for statistical analysis', 
-                                  ha='center', va='center', transform=self.inspection_ax.transAxes)
-            return
-        
-        if stats_type == "histogram":
-            # Plot histograms for first few numeric columns
-            for i, col in enumerate(numeric_columns[:4]):  # Limit to 4 columns
-                self.inspection_ax.hist(self.current_data[col], alpha=0.7, label=col, bins=30)
-            self.inspection_ax.legend()
-            self.inspection_ax.set_ylabel("Frequency")
-            self.inspection_ax.set_xlabel("Value")
-            
-        elif stats_type == "box_plot":
-            # Box plots for numeric columns
-            data_to_plot = [self.current_data[col].dropna() for col in numeric_columns[:8]]  # Limit to 8 columns
-            self.inspection_ax.boxplot(data_to_plot, labels=numeric_columns[:8])
-            self.inspection_ax.set_ylabel("Value")
-            plt.setp(self.inspection_ax.get_xticklabels(), rotation=45)
-            
-        elif stats_type == "correlation_matrix":
-            # Correlation matrix heatmap
-            if len(numeric_columns) > 1:
-                corr_matrix = self.current_data[numeric_columns].corr()
-                im = self.inspection_ax.imshow(corr_matrix, cmap='coolwarm', aspect='auto')
-                self.inspection_ax.set_xticks(range(len(numeric_columns)))
-                self.inspection_ax.set_yticks(range(len(numeric_columns)))
-                self.inspection_ax.set_xticklabels(numeric_columns, rotation=45)
-                self.inspection_ax.set_yticklabels(numeric_columns)
-                
-                # Add colorbar
-                self.inspection_fig.colorbar(im, ax=self.inspection_ax)
-            else:
-                self.inspection_ax.text(0.5, 0.5, 'Need at least 2 numeric columns for correlation matrix', 
-                                      ha='center', va='center', transform=self.inspection_ax.transAxes)
-    
-    def generate_time_series_plot(self):
-        """Generate plot for Time Series Analysis mode."""
-        if not hasattr(self, 'time_column_var') or not hasattr(self, 'ts_style_var'):
-            return
-        
-        time_col = self.time_column_var.get()
-        style = self.ts_style_var.get()
-        
-        if not time_col or time_col not in self.current_data.columns:
-            self.inspection_ax.text(0.5, 0.5, 'Please select a valid time column', 
-                                  ha='center', va='center', transform=self.inspection_ax.transAxes)
-            return
-        
-        # Get numeric columns for plotting
-        numeric_columns = self.current_data.select_dtypes(include=[np.number]).columns
-        plot_columns = [col for col in numeric_columns if col != time_col][:3]  # Limit to 3 series
-        
-        if not plot_columns:
-            self.inspection_ax.text(0.5, 0.5, 'No numeric columns found for time series plot', 
-                                  ha='center', va='center', transform=self.inspection_ax.transAxes)
-            return
-        
-        x_data = self.current_data[time_col]
-        
-        for col in plot_columns:
-            y_data = self.current_data[col]
-            
-            if style == "line":
-                self.inspection_ax.plot(x_data, y_data, label=col)
-            elif style == "area":
-                self.inspection_ax.fill_between(x_data, y_data, alpha=0.7, label=col)
-            elif style == "step":
-                self.inspection_ax.step(x_data, y_data, label=col, where='mid')
-        
-        self.inspection_ax.legend()
-        self.inspection_ax.set_xlabel(time_col)
-        self.inspection_ax.set_ylabel("Value")
-    
-    def generate_heatmap_plot(self):
-        """Generate heatmap visualization."""
-        if not hasattr(self, 'colormap_var') or not hasattr(self, 'norm_var'):
-            return
-        
-        colormap = self.colormap_var.get()
-        normalization = self.norm_var.get()
-        
-        # Get numeric data for heatmap
-        numeric_data = self.current_data.select_dtypes(include=[np.number])
-        
-        if numeric_data.empty:
-            self.inspection_ax.text(0.5, 0.5, 'No numeric data found for heatmap', 
-                                  ha='center', va='center', transform=self.inspection_ax.transAxes)
-            return
-        
-        # Apply normalization
-        plot_data = numeric_data.copy()
-        
-        if normalization == "row":
-            plot_data = plot_data.div(plot_data.sum(axis=1), axis=0)
-        elif normalization == "column":
-            plot_data = plot_data.div(plot_data.sum(axis=0), axis=1)
-        elif normalization == "z-score":
-            plot_data = (plot_data - plot_data.mean()) / plot_data.std()
-        
-        # Create heatmap
-        im = self.inspection_ax.imshow(plot_data.T, cmap=colormap, aspect='auto')
-        
-        # Set labels if data is not too large
-        if plot_data.shape[1] <= 20:
-            self.inspection_ax.set_yticks(range(len(plot_data.columns)))
-            self.inspection_ax.set_yticklabels(plot_data.columns)
-        
-        if plot_data.shape[0] <= 50:
-            self.inspection_ax.set_xticks(range(0, len(plot_data), max(1, len(plot_data)//10)))
-        
-        # Add colorbar
-        self.inspection_fig.colorbar(im, ax=self.inspection_ax)
-    
-    def generate_pca_plot(self):
-        """Generate PCA visualization."""
+    def generate_rasterplot_figure(self):
+        """Generate RasterPlot visualization."""
         try:
-            from sklearn.decomposition import PCA
-            from sklearn.preprocessing import StandardScaler
-        except ImportError:
-            self.inspection_ax.text(0.5, 0.5, 'scikit-learn is required for PCA analysis', 
-                                  ha='center', va='center', transform=self.inspection_ax.transAxes)
-            return
-        
-        if not hasattr(self, 'n_components_var') or not hasattr(self, 'pca_plot_var'):
-            return
-        
-        try:
-            n_components = int(self.n_components_var.get())
-        except ValueError:
-            n_components = 2
-        
-        plot_type = self.pca_plot_var.get()
-        
-        # Get numeric data
-        numeric_data = self.current_data.select_dtypes(include=[np.number]).dropna()
-        
-        if numeric_data.empty or numeric_data.shape[1] < 2:
-            self.inspection_ax.text(0.5, 0.5, 'Need at least 2 numeric columns for PCA', 
-                                  ha='center', va='center', transform=self.inspection_ax.transAxes)
-            return
-        
-        # Standardize data
-        scaler = StandardScaler()
-        scaled_data = scaler.fit_transform(numeric_data)
-        
-        # Apply PCA
-        pca = PCA(n_components=min(n_components, scaled_data.shape[1]))
-        pca_result = pca.fit_transform(scaled_data)
-        
-        if plot_type == "scatter":
-            if pca_result.shape[1] >= 2:
-                self.inspection_ax.scatter(pca_result[:, 0], pca_result[:, 1])
-                self.inspection_ax.set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]:.2%} variance)')
-                self.inspection_ax.set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]:.2%} variance)')
-            else:
-                self.inspection_ax.text(0.5, 0.5, 'Need at least 2 components for scatter plot', 
-                                      ha='center', va='center', transform=self.inspection_ax.transAxes)
-                
-        elif plot_type == "scree_plot":
-            self.inspection_ax.plot(range(1, len(pca.explained_variance_ratio_) + 1), 
-                                  pca.explained_variance_ratio_, 'bo-')
-            self.inspection_ax.set_xlabel('Principal Component')
-            self.inspection_ax.set_ylabel('Explained Variance Ratio')
-            self.inspection_ax.set_title('Scree Plot')
-    
-    def generate_comparison_plot(self):
-        """Generate comparison plots using files from Required Files section."""
-        if not hasattr(self, 'selected_files') or len(self.selected_files) < 2:
-            self.inspection_ax.text(0.5, 0.5, 'Please select at least 2 files in Required Files section', 
-                                  ha='center', va='center', transform=self.inspection_ax.transAxes)
-            return
-        
-        try:
-            comparison_type = getattr(self, 'comparison_type_var', tk.StringVar(value="overlay")).get()
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
-            
-            # Load all selected files
-            loaded_data = {}
-            for file_name, file_path in self.selected_files.items():
-                full_path = os.path.join(dataset_path, file_path)
-                file_ext = os.path.splitext(full_path)[1].lower()
-                
-                if file_ext == '.csv':
-                    data = pd.read_csv(full_path)
-                elif file_ext == '.npy':
-                    data_array = np.load(full_path)
-                    data = pd.DataFrame(data_array) if data_array.ndim == 2 else pd.DataFrame({'data': data_array})
-                else:
-                    continue  # Skip unsupported formats
-                
-                loaded_data[file_name] = data
-            
-            if len(loaded_data) < 2:
-                self.inspection_ax.text(0.5, 0.5, 'Could not load comparison data', 
-                                      ha='center', va='center', transform=self.inspection_ax.transAxes)
+            # Check if raster matrix is selected
+            if 'raster_matrix' not in self.file_selection_widgets or not self.file_selection_widgets['raster_matrix']['var'].get():
+                self.inspection_ax.text(0.5, 0.5, 'Please select a Raster matrix file', 
+                                      ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                      fontsize=12, alpha=0.7)
                 return
             
-            # Generate comparison plot based on type
-            file_names = list(loaded_data.keys())
+            # Load raster matrix
+            raster_file = self.file_selection_widgets['raster_matrix']['var'].get()
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            raster_path = os.path.join(dataset_path, raster_file)
             
-            if comparison_type == "overlay":
-                # Overlay plots
-                for i, (file_name, data) in enumerate(loaded_data.items()):
-                    numeric_cols = data.select_dtypes(include=[np.number]).columns
-                    if len(numeric_cols) > 0:
-                        col = numeric_cols[0]
-                        self.inspection_ax.plot(data[col], label=f'{file_name}: {os.path.basename(self.selected_files[file_name])}')
-                
-                self.inspection_ax.legend()
-                self.inspection_ax.set_ylabel('Value')
-                self.inspection_ax.set_xlabel('Index')
-                
-            elif comparison_type == "side_by_side":
-                # Side by side subplots
-                fig_rows = 1
-                fig_cols = len(loaded_data)
-                
-                # Clear current axis and create subplots
-                self.inspection_ax.clear()
-                
-                for i, (file_name, data) in enumerate(loaded_data.items()):
-                    ax = self.inspection_fig.add_subplot(fig_rows, fig_cols, i+1)
-                    numeric_cols = data.select_dtypes(include=[np.number]).columns
-                    if len(numeric_cols) > 0:
-                        col = numeric_cols[0]
-                        ax.plot(data[col])
-                        ax.set_title(f'{file_name}')
-                        ax.set_ylabel('Value')
-                        ax.set_xlabel('Index')
-                
-            elif comparison_type == "difference":
-                # Difference plot
-                if len(loaded_data) >= 2:
-                    data1 = list(loaded_data.values())[0]
-                    data2 = list(loaded_data.values())[1]
-                    
-                    numeric_cols1 = data1.select_dtypes(include=[np.number]).columns
-                    numeric_cols2 = data2.select_dtypes(include=[np.number]).columns
-                    
-                    if len(numeric_cols1) > 0 and len(numeric_cols2) > 0:
-                        col1, col2 = numeric_cols1[0], numeric_cols2[0]
-                        
-                        # Ensure same length for subtraction
-                        min_len = min(len(data1[col1]), len(data2[col2]))
-                        diff = data1[col1][:min_len] - data2[col2][:min_len]
-                        
-                        self.inspection_ax.plot(diff, label='Difference')
-                        self.inspection_ax.axhline(y=0, color='k', linestyle='--', alpha=0.5)
-                        self.inspection_ax.set_ylabel('Difference')
-                        self.inspection_ax.set_xlabel('Index')
-                        self.inspection_ax.legend()
-        
+            # Load matrix data
+            raster_matrix = np.load(raster_path)
+            
+            # Create the plot
+            colormap = self.raster_colormap.get()
+            im = self.inspection_ax.imshow(raster_matrix, cmap=colormap, aspect='auto')
+            
+            # Set title
+            dataset_name = self.selected_dataset.name
+            raster_filename = os.path.basename(raster_file)
+            # Extract last part after "Raster_matrix"
+            title_suffix = raster_filename.replace("Raster_matrix", "").replace(".npy", "")
+            if title_suffix.startswith("_"):
+                title_suffix = title_suffix[1:]
+            if not title_suffix:
+                title_suffix = "matrix"
+            
+            figure_title = f"{dataset_name} {title_suffix}"
+            self.inspection_ax.set_title(figure_title)
+            
+            # Set axis labels
+            self.inspection_ax.set_xlabel(self.raster_column_title.get())
+            self.inspection_ax.set_ylabel(self.raster_row_title.get())
+            
+            # Handle row labels
+            if self.raster_row_labels_enabled.get() and 'row_labels' in self.file_selection_widgets:
+                row_labels_file = self.file_selection_widgets['row_labels']['var'].get()
+                if row_labels_file:
+                    self.apply_axis_labels(raster_path, row_labels_file, 'row', raster_matrix.shape[0])
+                else:
+                    # Clear row labels if no file selected
+                    self.inspection_ax.set_yticks([])
+            else:
+                # Clear row labels if checkbox unchecked
+                self.inspection_ax.set_yticks([])
+            
+            # Handle column labels
+            if self.raster_column_labels_enabled.get() and 'column_labels' in self.file_selection_widgets:
+                column_labels_file = self.file_selection_widgets['column_labels']['var'].get()
+                if column_labels_file:
+                    self.apply_axis_labels(raster_path, column_labels_file, 'column', raster_matrix.shape[1])
+                else:
+                    # Clear column labels if no file selected
+                    self.inspection_ax.set_xticks([])
+            else:
+                # Clear column labels if checkbox unchecked
+                self.inspection_ax.set_xticks([])
+            
+            # Add colorbar
+            if hasattr(self, 'raster_colorbar'):
+                self.raster_colorbar.remove()
+            self.raster_colorbar = self.inspection_fig.colorbar(im, ax=self.inspection_ax)
+            
         except Exception as e:
-            self.inspection_ax.text(0.5, 0.5, f'Error generating comparison plot:\n{str(e)}', 
-                                  ha='center', va='center', transform=self.inspection_ax.transAxes)
-            print(f"Comparison plot error: {e}")
+            self.inspection_ax.text(0.5, 0.5, f'Error generating RasterPlot:\n{str(e)}', 
+                                  ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                  fontsize=10, color='red')
+            print(f"RasterPlot error: {e}")
+    
+    def apply_axis_labels(self, raster_path, labels_file, axis, axis_length):
+        """Apply labels to the specified axis with equal spacing."""
+        try:
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            labels_path = os.path.join(dataset_path, labels_file)
+            
+            # Load labels
+            labels_df = pd.read_csv(labels_path)
+            # Assume first column contains the labels
+            labels = labels_df.iloc[:, 0].astype(str).tolist()
+            
+            # Get the number of labels to show
+            if axis == 'row':
+                try:
+                    num_labels = int(self.raster_row_label_count.get())
+                except ValueError:
+                    num_labels = 6
+            else:
+                try:
+                    num_labels = int(self.raster_column_label_count.get())
+                except ValueError:
+                    num_labels = 6
+            
+            # Calculate equally spaced positions
+            if len(labels) > 0 and num_labels > 0:
+                max_labels = min(num_labels, len(labels))
+                if max_labels == 1:
+                    positions = [len(labels) - 1]
+                    selected_labels = [labels[-1]]
+                else:
+                    step = (len(labels) - 1) / (max_labels - 1)
+                    positions = [int(round(i * step)) for i in range(max_labels)]
+                    selected_labels = [labels[pos] for pos in positions]
+                
+                # Apply to appropriate axis
+                if axis == 'row':
+                    self.inspection_ax.set_yticks(positions)
+                    self.inspection_ax.set_yticklabels(selected_labels)
+                else:
+                    self.inspection_ax.set_xticks(positions)
+                    self.inspection_ax.set_xticklabels(selected_labels, rotation=45)
+            
+        except Exception as e:
+            print(f"Error applying {axis} labels: {e}")
+            # Clear labels on error
+            if axis == 'row':
+                self.inspection_ax.set_yticks([])
+            else:
+                self.inspection_ax.set_xticks([])
+    
+
+    
+
+    
+
+    
+
+    
+
     
     def clear_inspection_figure(self):
         """Clear the inspection figure."""
@@ -1281,13 +1129,8 @@ class FigureGenerationGUI:
                 "timestamp": timestamp
             }
             
-            # Add mode-specific parameters
-            if hasattr(self, 'plot_type_var'):
-                parameters["plot_type"] = self.plot_type_var.get()
-            if hasattr(self, 'colormap_var'):
-                parameters["colormap"] = self.colormap_var.get()
-            if hasattr(self, 'norm_var'):
-                parameters["normalization"] = self.norm_var.get()
+            # Add mode-specific parameters (will be expanded for custom modes)
+            # Custom mode parameters will be collected here when modes are implemented
             
             # Create database record
             try:
