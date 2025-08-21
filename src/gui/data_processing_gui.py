@@ -21,7 +21,7 @@ class DataProcessingGUI:
     def __init__(self):
         self.window = tk.Toplevel()
         self.window.title("Data Processing")
-        self.window.geometry("800x600")
+        self.window.geometry("800x1000")
         self.window.configure(bg='#f0f0f0')
         
         self.selected_dataset = None
