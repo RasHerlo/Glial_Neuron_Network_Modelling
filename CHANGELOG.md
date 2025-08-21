@@ -49,10 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - File validation and error handling
 
 - **Data Processing System**
-  - Data cleaning processor (missing values, duplicates, outliers)
-  - Smoothing processor (rolling mean, median, exponential, Savitzky-Golay)
-  - Filtering processor (range, threshold, percentile, custom conditions)
-  - Statistical analysis processor (descriptive stats, correlations, distributions)
+  - Matrix extraction processor (extract matrices with row/column labels from CSV files)
   - Processing job management with progress tracking
   - Parameter validation and default settings
 

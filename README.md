@@ -102,10 +102,7 @@ Glial_Neuron_Network_Modelling/
 
 - Select datasets from the "Data Processing" interface
 - Choose processing operations:
-  - **Data Cleaning**: Handle missing values, duplicates, outliers
-  - **Smoothing**: Apply various smoothing filters
-  - **Filtering**: Filter data based on criteria
-  - **Statistical Analysis**: Generate comprehensive statistics
+  - **Matrix Extraction**: Extract matrices with row and column labels from CSV files
 - Monitor processing progress in real-time
 - View processing history and results
 
