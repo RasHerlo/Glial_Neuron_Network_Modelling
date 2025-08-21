@@ -69,11 +69,21 @@ class DataProcessingGUI:
         # Processing type
         ttk.Label(processing_frame, text="Processing Type:").grid(row=0, column=0, sticky="w", padx=5)
         self.processing_type_var = tk.StringVar()
-        processing_combo = ttk.Combobox(processing_frame, textvariable=self.processing_type_var,
-                                       values=["Matrix Extraction"], 
-                                       state="readonly", width=30)
-        processing_combo.grid(row=0, column=1, padx=5, pady=2)
-        processing_combo.bind('<<ComboboxSelected>>', self.on_processing_type_change)
+        
+        # Get available processors dynamically
+        from src.data_processing.processors import DataProcessingManager
+        manager = DataProcessingManager()
+        available_processors = manager.get_available_processors()
+        
+        self.processing_combo = ttk.Combobox(processing_frame, textvariable=self.processing_type_var,
+                                           values=available_processors, 
+                                           state="readonly", width=30)
+        self.processing_combo.grid(row=0, column=1, padx=5, pady=2)
+        self.processing_combo.bind('<<ComboboxSelected>>', self.on_processing_type_change)
+        
+        # Set default to Matrix Extraction to maintain backward compatibility
+        if "Matrix Extraction" in available_processors:
+            self.processing_type_var.set("Matrix Extraction")
         
 
         
@@ -86,7 +96,7 @@ class DataProcessingGUI:
         self.params_frame.pack(fill="both", expand=True)
         
         self.param_vars = {}
-        self.create_default_params()
+        self.create_matrix_extraction_params()  # Default to Matrix Extraction parameters
         
         # Active jobs frame
         jobs_frame = ttk.LabelFrame(self.window, text="Active Jobs", padding=10)
@@ -138,8 +148,8 @@ class DataProcessingGUI:
         self.refresh_jobs()
         self.schedule_job_refresh()
     
-    def create_default_params(self):
-        """Create default parameter widgets."""
+    def create_matrix_extraction_params(self):
+        """Create parameter widgets for Matrix Extraction."""
         # Clear existing params
         for widget in self.params_frame.winfo_children():
             widget.destroy()
@@ -173,12 +183,103 @@ class DataProcessingGUI:
                 ttk.Entry(self.params_frame, textvariable=self.param_vars[key], 
                          width=20).grid(row=i, column=1, padx=5)
     
+    def create_matrix_modification_params(self):
+        """Create parameter widgets for Matrix Modification."""
+        # Clear existing params
+        for widget in self.params_frame.winfo_children():
+            widget.destroy()
+        self.param_vars.clear()
+        
+        # Matrix dropdown (will be populated based on selected dataset)
+        ttk.Label(self.params_frame, text="Matrix:").grid(row=0, column=0, sticky="w", padx=5)
+        self.param_vars['matrix'] = tk.StringVar()
+        self.matrix_combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars['matrix'],
+                                        values=[], state="readonly", width=20)
+        self.matrix_combo.grid(row=0, column=1, padx=5)
+        self.matrix_combo.bind('<<ComboboxSelected>>', self.on_matrix_selection_change)
+        
+        # Operation dropdown
+        ttk.Label(self.params_frame, text="Operation:").grid(row=1, column=0, sticky="w", padx=5)
+        self.param_vars['operation'] = tk.StringVar(value='Z-scoring')
+        operation_combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars['operation'],
+                                      values=['Z-scoring', '[0,1] normalization'], 
+                                      state="readonly", width=20)
+        operation_combo.grid(row=1, column=1, padx=5)
+        operation_combo.bind('<<ComboboxSelected>>', self.on_operation_change)
+        
+        # Output filename
+        ttk.Label(self.params_frame, text="Output Filename:").grid(row=2, column=0, sticky="w", padx=5)
+        self.param_vars['output_filename'] = tk.StringVar()
+        ttk.Entry(self.params_frame, textvariable=self.param_vars['output_filename'], 
+                 width=20).grid(row=2, column=1, padx=5)
+        
+        # File format dropdown
+        ttk.Label(self.params_frame, text="File Format:").grid(row=3, column=0, sticky="w", padx=5)
+        self.param_vars['fileformat'] = tk.StringVar(value='.npy')
+        format_combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars['fileformat'],
+                                   values=['.npy', '.csv'], state="readonly", width=20)
+        format_combo.grid(row=3, column=1, padx=5)
+        
+        # Update matrix dropdown based on currently selected dataset
+        self.update_matrix_dropdown()
+    
+    def update_matrix_dropdown(self):
+        """Update matrix dropdown based on selected dataset."""
+        if not self.selected_dataset:
+            self.matrix_combo['values'] = []
+            return
+        
+        # Get available matrices for the selected dataset
+        from src.data_processing.processors import DataProcessingManager
+        manager = DataProcessingManager()
+        matrix_processor = manager.get_processor("Matrix Modification")
+        
+        if matrix_processor:
+            available_matrices = matrix_processor.find_matrix_files(self.selected_dataset.name)
+            self.matrix_combo['values'] = available_matrices
+            
+            # Clear current selection if no matrices available
+            if not available_matrices:
+                self.param_vars['matrix'].set('')
+            elif len(available_matrices) == 1:
+                # Auto-select if only one matrix available
+                self.param_vars['matrix'].set(available_matrices[0])
+                self.on_matrix_selection_change()
+    
+    def on_matrix_selection_change(self, event=None):
+        """Handle matrix selection change - update output filename."""
+        self.update_output_filename()
+    
+    def on_operation_change(self, event=None):
+        """Handle operation change - update output filename."""
+        self.update_output_filename()
+    
+    def update_output_filename(self):
+        """Update output filename based on selected matrix and operation."""
+        matrix_name = self.param_vars['matrix'].get()
+        operation = self.param_vars['operation'].get()
+        
+        if matrix_name and operation:
+            # Generate suggested filename
+            from src.data_processing.processors import DataProcessingManager
+            manager = DataProcessingManager()
+            matrix_processor = manager.get_processor("Matrix Modification")
+            
+            if matrix_processor:
+                suggested_name = matrix_processor.generate_output_filename(matrix_name, operation)
+                self.param_vars['output_filename'].set(suggested_name)
+    
     def on_processing_type_change(self, event=None):
         """Update parameters based on processing type."""
         processing_type = self.processing_type_var.get()
         
-        # Matrix Extraction parameters are already set in create_default_params
-        # Could add dynamic parameter updates here if needed
+        if processing_type == "Matrix Extraction":
+            self.create_matrix_extraction_params()
+        elif processing_type == "Matrix Modification":
+            self.create_matrix_modification_params()
+        else:
+            # Fallback to Matrix Extraction for unknown types
+            self.create_matrix_extraction_params()
     
     def load_datasets(self):
         """Load available datasets."""
@@ -210,6 +311,10 @@ class DataProcessingGUI:
                 info_text += f"Imported: {self.selected_dataset.import_date.strftime('%Y-%m-%d %H:%M') if self.selected_dataset.import_date else 'unknown'}"
                 
                 self.dataset_info_var.set(info_text)
+                
+                # Update matrix dropdown if Matrix Modification is selected
+                if self.processing_type_var.get() == "Matrix Modification":
+                    self.update_matrix_dropdown()
     
     def start_processing(self):
         """Start a processing job."""
@@ -221,6 +326,13 @@ class DataProcessingGUI:
         if not processing_type:
             messagebox.showwarning("No Processing Type", "Please select a processing type.")
             return
+        
+        # Additional validation for Matrix Modification
+        if processing_type == "Matrix Modification":
+            matrix_selected = self.param_vars.get('matrix', tk.StringVar()).get()
+            if not matrix_selected:
+                messagebox.showwarning("No Matrix Selected", "Please select a matrix to modify.")
+                return
         
         try:
             # Collect parameters

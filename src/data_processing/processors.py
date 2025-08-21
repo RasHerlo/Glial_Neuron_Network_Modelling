@@ -338,12 +338,201 @@ class MatrixExtractionProcessor(BaseProcessor):
             }
 
 
+class MatrixModificationProcessor(BaseProcessor):
+    """Processor for applying mathematical operations to existing processed matrices."""
+    
+    def __init__(self):
+        super().__init__("Matrix Modification")
+        self.description = "Apply mathematical operations to existing processed matrices"
+    
+    def get_default_parameters(self) -> Dict[str, Any]:
+        return {
+            'matrix': None,  # Will be populated dynamically from available matrices
+            'operation': 'Z-scoring',
+            'output_filename': '',  # Will be auto-generated based on matrix + operation
+            'fileformat': '.npy'
+        }
+    
+    def get_available_operations(self) -> List[str]:
+        """Get list of available matrix operations."""
+        return ['Z-scoring', '[0,1] normalization']
+    
+    def find_matrix_files(self, dataset_name: str) -> List[str]:
+        """Find all .npy files in the dataset's processed/matrices folder."""
+        matrices_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+        
+        if not os.path.exists(matrices_path):
+            return []
+        
+        matrix_files = []
+        for file in os.listdir(matrices_path):
+            if file.endswith('.npy'):
+                # Remove .npy extension: "Raster_matrix.npy" -> "Raster_matrix"
+                base_name = file[:-4]  # Remove last 4 characters (.npy)
+                matrix_files.append(base_name)
+        
+        return sorted(matrix_files)  # Sort alphabetically
+    
+    def generate_output_filename(self, matrix_name: str, operation: str) -> str:
+        """Generate default output filename based on matrix name and operation."""
+        operation_suffixes = {
+            'Z-scoring': 'zscore',
+            '[0,1] normalization': 'norm01'
+        }
+        suffix = operation_suffixes.get(operation, 'modified')
+        return f"{matrix_name}_{suffix}"
+    
+    def apply_zscore_rowwise(self, matrix_data: np.ndarray) -> np.ndarray:
+        """Apply Z-score normalization per row: (x - row_mean) / row_std."""
+        # Calculate mean and std per row (axis=1), keep dimensions for broadcasting
+        row_mean = np.mean(matrix_data, axis=1, keepdims=True)
+        row_std = np.std(matrix_data, axis=1, keepdims=True)
+        
+        # Handle rows with zero standard deviation (constant values)
+        row_std = np.where(row_std == 0, 1, row_std)
+        
+        return (matrix_data - row_mean) / row_std
+    
+    def apply_01_normalization_rowwise(self, matrix_data: np.ndarray) -> np.ndarray:
+        """Apply [0,1] normalization per row: (x - row_min) / (row_max - row_min)."""
+        # Calculate min and max per row (axis=1), keep dimensions for broadcasting
+        row_min = np.min(matrix_data, axis=1, keepdims=True)
+        row_max = np.max(matrix_data, axis=1, keepdims=True)
+        
+        # Handle rows with zero range (constant values)
+        row_range = row_max - row_min
+        row_range = np.where(row_range == 0, 1, row_range)
+        
+        return (matrix_data - row_min) / row_range
+    
+    def process(self, data: Any, parameters: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Process the matrix with the specified operation."""
+        if parameters is None:
+            parameters = self.get_default_parameters()
+        
+        try:
+            # Get parameters
+            matrix_name = parameters.get('matrix')
+            operation = parameters.get('operation', 'Z-scoring')
+            output_filename = parameters.get('output_filename', '')
+            fileformat = parameters.get('fileformat', '.npy')
+            dataset_name = parameters.get('dataset_name', 'unknown_dataset')
+            
+            if not matrix_name:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': 'No matrix selected for modification'
+                }
+            
+            # Construct matrix file path
+            matrix_file_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", f"{matrix_name}.npy")
+            
+            # Validate matrix file exists
+            if not os.path.exists(matrix_file_path):
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Matrix file not found: {matrix_file_path}'
+                }
+            
+            # Load matrix
+            matrix_data = np.load(matrix_file_path)
+            
+            # Validate matrix is 2D
+            if len(matrix_data.shape) != 2:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Matrix must be 2D, got shape: {matrix_data.shape}'
+                }
+            
+            # Apply operation
+            if operation == 'Z-scoring':
+                modified_matrix = self.apply_zscore_rowwise(matrix_data)
+                operation_desc = "Z-score normalization (row-wise)"
+            elif operation == '[0,1] normalization':
+                modified_matrix = self.apply_01_normalization_rowwise(matrix_data)
+                operation_desc = "[0,1] normalization (row-wise)"
+            else:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Unknown operation: {operation}'
+                }
+            
+            # Generate output filename if not provided
+            if not output_filename:
+                output_filename = self.generate_output_filename(matrix_name, operation)
+            
+            # Create output directory
+            output_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Save modified matrix
+            if fileformat == '.npy':
+                output_path = os.path.join(output_dir, f"{output_filename}.npy")
+                np.save(output_path, modified_matrix)
+            elif fileformat == '.csv':
+                output_path = os.path.join(output_dir, f"{output_filename}.csv")
+                pd.DataFrame(modified_matrix).to_csv(output_path, index=False, header=False)
+            else:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Unsupported file format: {fileformat}'
+                }
+            
+            # Calculate statistics
+            statistics = {
+                'original_matrix_shape': matrix_data.shape,
+                'modified_matrix_shape': modified_matrix.shape,
+                'operation_applied': operation_desc,
+                'original_matrix_stats': {
+                    'mean': float(np.mean(matrix_data)),
+                    'std': float(np.std(matrix_data)),
+                    'min': float(np.min(matrix_data)),
+                    'max': float(np.max(matrix_data))
+                },
+                'modified_matrix_stats': {
+                    'mean': float(np.mean(modified_matrix)),
+                    'std': float(np.std(modified_matrix)),
+                    'min': float(np.min(modified_matrix)),
+                    'max': float(np.max(modified_matrix))
+                },
+                'output_file': output_path,
+                'output_format': fileformat
+            }
+            
+            return {
+                'success': True,
+                'data': modified_matrix,
+                'statistics': statistics,
+                'output_path': output_path,
+                'message': f'{operation_desc} completed. Output saved to: {output_path}'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'data': None,
+                'statistics': None,
+                'message': f'Matrix modification failed: {str(e)}'
+            }
+
+
 class DataProcessingManager:
     """Manager class for coordinating different data processors."""
     
     def __init__(self):
         self.processors = {
-            'Matrix Extraction': MatrixExtractionProcessor()
+            'Matrix Extraction': MatrixExtractionProcessor(),
+            'Matrix Modification': MatrixModificationProcessor()
         }
     
     def get_processor(self, processor_name: str) -> Optional[BaseProcessor]:
