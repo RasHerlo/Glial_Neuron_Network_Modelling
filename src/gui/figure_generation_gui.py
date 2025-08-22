@@ -1433,7 +1433,7 @@ class FigureGenerationGUI:
                                  single_neuron_curve - single_neuron_std,
                                  single_neuron_curve + single_neuron_std,
                                  alpha=0.3, color='blue')
-            ax_single.set_ylabel('Neural Activity')
+            ax_single.set_ylabel('Relative Activity (normalized to baseline)')
             ax_single.set_title(f'Neuron {current_neuron_idx + 1} Tuning Curve')
             ax_single.grid(True, alpha=0.3)
             
@@ -1458,7 +1458,7 @@ class FigureGenerationGUI:
                                population_curve + population_std,
                                alpha=0.3, color='green')
             ax_pop.set_xlabel(f'Time relative to stimulus ({time_unit})')
-            ax_pop.set_ylabel('Neural Activity')
+            ax_pop.set_ylabel('Relative Activity (normalized to baseline)')
             ax_pop.set_title('Population Average Tuning Curve')
             ax_pop.grid(True, alpha=0.3)
             
@@ -1475,9 +1475,11 @@ class FigureGenerationGUI:
                 except ValueError:
                     pass
             
-            # Add stimulus start marker (always at 0)
+            # Add stimulus start marker (always at 0) and baseline reference
             ax_single.axvline(x=0, color='black', linestyle='-', alpha=0.5, linewidth=1)
+            ax_single.axhline(y=1.0, color='gray', linestyle=':', alpha=0.7, linewidth=1)
             ax_pop.axvline(x=0, color='black', linestyle='-', alpha=0.5, linewidth=1)
+            ax_pop.axhline(y=1.0, color='gray', linestyle=':', alpha=0.7, linewidth=1)
             
             # Update the main inspection_ax reference for consistency
             self.inspection_ax = ax_pop
@@ -1530,7 +1532,34 @@ class FigureGenerationGUI:
         mean_trace = np.mean(neuron_traces, axis=0)
         std_trace = np.std(neuron_traces, axis=0)
         
-        return mean_trace, std_trace
+        # Normalize to baseline (average of last 20 frames before stimulus)
+        # Get baseline frames (frames before stimulus start)
+        frames_before = int(self.tuning_frames_before.get())
+        
+        # Calculate baseline as the average of the last 20 frames before stimulus
+        # (or all available frames if less than 20)
+        baseline_frames = min(20, frames_before)
+        if baseline_frames > 0:
+            # Baseline is from (frames_before - baseline_frames) to frames_before
+            baseline_start = max(0, frames_before - baseline_frames)
+            baseline_end = frames_before
+            baseline_mean = np.mean(mean_trace[baseline_start:baseline_end])
+            
+            # Avoid division by zero
+            if baseline_mean > 0:
+                normalized_mean_trace = mean_trace / baseline_mean
+                normalized_std_trace = std_trace / baseline_mean
+            else:
+                # If baseline is zero, add small epsilon to avoid division by zero
+                baseline_mean = baseline_mean + 1e-10
+                normalized_mean_trace = mean_trace / baseline_mean
+                normalized_std_trace = std_trace / baseline_mean
+        else:
+            # If no baseline frames available, return unnormalized
+            normalized_mean_trace = mean_trace
+            normalized_std_trace = std_trace
+        
+        return normalized_mean_trace, normalized_std_trace
     
     def calculate_population_tuning_curve(self, stimulus_windows):
         """Calculate weighted population average across all neurons."""
