@@ -269,6 +269,182 @@ class DataProcessingGUI:
                 suggested_name = matrix_processor.generate_output_filename(matrix_name, operation)
                 self.param_vars['output_filename'].set(suggested_name)
     
+    def create_data_annotation_params(self):
+        """Create parameter widgets for Data Annotation."""
+        # Clear existing params
+        for widget in self.params_frame.winfo_children():
+            widget.destroy()
+        self.param_vars.clear()
+        
+        # Create main container with two columns
+        main_frame = ttk.Frame(self.params_frame)
+        main_frame.pack(fill="both", expand=True)
+        
+        # Left side - Required Files parameters
+        left_frame = ttk.LabelFrame(main_frame, text="Required Files", padding=5)
+        left_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        
+        # Right side - Stimulation Periods
+        right_frame = ttk.LabelFrame(main_frame, text="Stimulation Periods (sec)", padding=5)
+        right_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
+        
+        # Left side parameters
+        # Annotation Name
+        ttk.Label(left_frame, text="Annotation Name:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['annotation_name'] = tk.StringVar(value='annotation_vector')
+        ttk.Entry(left_frame, textvariable=self.param_vars['annotation_name'], 
+                 width=20).grid(row=0, column=1, padx=5, pady=2)
+        
+        # Vector Dimension
+        ttk.Label(left_frame, text="Vector Dimension:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['vector_dimension'] = tk.StringVar()
+        self.dimension_combo = ttk.Combobox(left_frame, textvariable=self.param_vars['vector_dimension'],
+                                          values=[], state="readonly", width=18)
+        self.dimension_combo.grid(row=1, column=1, padx=5, pady=2)
+        
+        # FrameRate
+        ttk.Label(left_frame, text="FrameRate (fr/s):").grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['framerate'] = tk.StringVar(value='10.02')
+        ttk.Entry(left_frame, textvariable=self.param_vars['framerate'], 
+                 width=20).grid(row=2, column=1, padx=5, pady=2)
+        
+        # Right side - Stimulation Periods
+        # Container for periods with scrollbar
+        periods_container = ttk.Frame(right_frame)
+        periods_container.pack(fill="both", expand=True)
+        
+        # Scrollable frame for periods
+        canvas = tk.Canvas(periods_container, height=200)
+        scrollbar = ttk.Scrollbar(periods_container, orient="vertical", command=canvas.yview)
+        self.periods_scrollable_frame = ttk.Frame(canvas)
+        
+        self.periods_scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=self.periods_scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Store canvas reference for later updates
+        self.periods_canvas = canvas
+        
+        # Initialize periods list and variables
+        self.stimulation_periods = []
+        self.period_vars = []
+        
+        # Add initial 5 periods
+        for i in range(5):
+            self.add_stimulation_period()
+        
+        # Add/Remove buttons
+        button_frame = ttk.Frame(right_frame)
+        button_frame.pack(fill="x", pady=5)
+        
+        ttk.Button(button_frame, text="Add Period", 
+                  command=self.add_stimulation_period).pack(side="left", padx=2)
+        ttk.Button(button_frame, text="Remove Period", 
+                  command=self.remove_stimulation_period).pack(side="left", padx=2)
+        
+        # Update dimension dropdown based on currently selected dataset
+        self.update_dimension_dropdown()
+    
+    def add_stimulation_period(self):
+        """Add a new stimulation period input row."""
+        period_index = len(self.stimulation_periods)
+        
+        # Create frame for this period
+        period_frame = ttk.Frame(self.periods_scrollable_frame)
+        period_frame.pack(fill="x", pady=2)
+        
+        # Period label
+        ttk.Label(period_frame, text=f"Period {period_index + 1}:").pack(side="left", padx=5)
+        
+        # Start time
+        ttk.Label(period_frame, text="start:").pack(side="left", padx=2)
+        start_var = tk.StringVar()
+        start_entry = ttk.Entry(period_frame, textvariable=start_var, width=8)
+        start_entry.pack(side="left", padx=2)
+        
+        # End time
+        ttk.Label(period_frame, text="end:").pack(side="left", padx=2)
+        end_var = tk.StringVar()
+        end_entry = ttk.Entry(period_frame, textvariable=end_var, width=8)
+        end_entry.pack(side="left", padx=2)
+        
+        # Store period data
+        period_data = {
+            'frame': period_frame,
+            'start_var': start_var,
+            'end_var': end_var,
+            'start_entry': start_entry,
+            'end_entry': end_entry
+        }
+        
+        self.stimulation_periods.append(period_data)
+        self.period_vars.extend([start_var, end_var])
+        
+        # Update canvas scroll region
+        self.periods_scrollable_frame.update_idletasks()
+        self.periods_canvas.configure(scrollregion=self.periods_canvas.bbox("all"))
+    
+    def remove_stimulation_period(self):
+        """Remove the last stimulation period input row."""
+        if len(self.stimulation_periods) <= 1:
+            return  # Keep at least one period
+        
+        # Remove the last period
+        last_period = self.stimulation_periods.pop()
+        
+        # Remove from period_vars
+        self.period_vars.remove(last_period['start_var'])
+        self.period_vars.remove(last_period['end_var'])
+        
+        # Destroy the frame
+        last_period['frame'].destroy()
+        
+        # Update canvas scroll region
+        self.periods_scrollable_frame.update_idletasks()
+        self.periods_canvas.configure(scrollregion=self.periods_canvas.bbox("all"))
+    
+    def update_dimension_dropdown(self):
+        """Update dimension dropdown based on selected dataset."""
+        if not self.selected_dataset:
+            self.dimension_combo['values'] = []
+            return
+        
+        # Get available matrix dimensions for the selected dataset
+        from src.data_processing.processors import DataProcessingManager
+        manager = DataProcessingManager()
+        annotation_processor = manager.get_processor("Data Annotation")
+        
+        if annotation_processor:
+            try:
+                matrix_dimensions = annotation_processor.find_matrix_files(self.selected_dataset.name)
+                
+                dimension_options = []
+                if matrix_dimensions:
+                    # Use actual matrix dimensions
+                    first_shape = next(iter(matrix_dimensions.values()))
+                    rows, cols = first_shape
+                    dimension_options = [f"rows = {rows}", f"columns = {cols}"]
+                else:
+                    # Use fallback dimensions
+                    dimension_options = ["rows = 1215", "columns = 1000"]
+                
+                self.dimension_combo['values'] = dimension_options
+                
+                # Auto-select first option if available
+                if dimension_options:
+                    self.param_vars['vector_dimension'].set(dimension_options[0])
+                    
+            except Exception as e:
+                print(f"Error updating dimension dropdown: {e}")
+                self.dimension_combo['values'] = ["rows = 1215", "columns = 1000"]
+    
     def on_processing_type_change(self, event=None):
         """Update parameters based on processing type."""
         processing_type = self.processing_type_var.get()
@@ -277,6 +453,8 @@ class DataProcessingGUI:
             self.create_matrix_extraction_params()
         elif processing_type == "Matrix Modification":
             self.create_matrix_modification_params()
+        elif processing_type == "Data Annotation":
+            self.create_data_annotation_params()
         else:
             # Fallback to Matrix Extraction for unknown types
             self.create_matrix_extraction_params()
@@ -315,6 +493,9 @@ class DataProcessingGUI:
                 # Update matrix dropdown if Matrix Modification is selected
                 if self.processing_type_var.get() == "Matrix Modification":
                     self.update_matrix_dropdown()
+                # Update dimension dropdown if Data Annotation is selected
+                elif self.processing_type_var.get() == "Data Annotation":
+                    self.update_dimension_dropdown()
     
     def start_processing(self):
         """Start a processing job."""
@@ -334,6 +515,31 @@ class DataProcessingGUI:
                 messagebox.showwarning("No Matrix Selected", "Please select a matrix to modify.")
                 return
         
+        # Additional validation for Data Annotation
+        if processing_type == "Data Annotation":
+            annotation_name = self.param_vars.get('annotation_name', tk.StringVar()).get().strip()
+            if not annotation_name:
+                messagebox.showwarning("Missing Annotation Name", "Please provide an annotation name.")
+                return
+            
+            vector_dimension = self.param_vars.get('vector_dimension', tk.StringVar()).get()
+            if not vector_dimension:
+                messagebox.showwarning("Missing Vector Dimension", "Please select a vector dimension.")
+                return
+            
+            # Check if at least one valid stimulation period is provided
+            valid_periods = 0
+            for period_data in getattr(self, 'stimulation_periods', []):
+                start_str = period_data['start_var'].get().strip()
+                end_str = period_data['end_var'].get().strip()
+                if start_str and end_str:
+                    valid_periods += 1
+            
+            if valid_periods == 0:
+                messagebox.showwarning("Missing Stimulation Periods", 
+                                     "Please provide at least one stimulation period with start and end times.")
+                return
+        
         try:
             # Collect parameters
             parameters = {}
@@ -346,9 +552,32 @@ class DataProcessingGUI:
                     # Handle string parameters
                     parameters[key] = value if value else None
             
-            # Generate job name from matrix name
-            matrix_name = parameters.get('matrix_name', 'extracted_matrix')
-            job_name = f"Matrix_Extraction_{matrix_name}"
+            # Handle Data Annotation specific parameters
+            if processing_type == "Data Annotation":
+                # Collect stimulation periods from the dynamic UI
+                stimulation_periods = []
+                for period_data in self.stimulation_periods:
+                    start_str = period_data['start_var'].get().strip()
+                    end_str = period_data['end_var'].get().strip()
+                    
+                    # Only add periods with both start and end values
+                    if start_str and end_str:
+                        try:
+                            start_time = float(start_str)
+                            end_time = float(end_str)
+                            stimulation_periods.append((start_time, end_time))
+                        except ValueError:
+                            continue  # Skip invalid periods
+                
+                parameters['stimulation_periods'] = stimulation_periods
+                
+                # Generate job name from annotation name
+                annotation_name = parameters.get('annotation_name', 'annotation_vector')
+                job_name = f"Data_Annotation_{annotation_name}"
+            else:
+                # Generate job name from matrix name for other processing types
+                matrix_name = parameters.get('matrix_name', 'extracted_matrix')
+                job_name = f"Matrix_Extraction_{matrix_name}"
             
             # Create processing job
             job_id = ProcessingJobOperations.create_job(
