@@ -977,10 +977,14 @@ class FigureGenerationGUI:
                 # Clear column labels if checkbox unchecked
                 self.inspection_ax.set_xticks([])
             
-            # Add colorbar
-            if hasattr(self, 'raster_colorbar'):
-                self.raster_colorbar.remove()
-            self.raster_colorbar = self.inspection_fig.colorbar(im, ax=self.inspection_ax)
+            # Remove any existing colorbar
+            if hasattr(self, 'raster_colorbar') and self.raster_colorbar is not None:
+                try:
+                    self.raster_colorbar.remove()
+                except (ValueError, AttributeError):
+                    # Colorbar might already be removed or invalid
+                    pass
+                self.raster_colorbar = None
             
         except Exception as e:
             self.inspection_ax.text(0.5, 0.5, f'Error generating RasterPlot:\n{str(e)}', 
@@ -997,7 +1001,18 @@ class FigureGenerationGUI:
             # Load labels
             labels_df = pd.read_csv(labels_path)
             # Assume first column contains the labels
-            labels = labels_df.iloc[:, 0].astype(str).tolist()
+            # Format numeric labels by rounding to integers, keep non-numeric as strings
+            raw_labels = labels_df.iloc[:, 0]
+            labels = []
+            for label in raw_labels:
+                try:
+                    # Try to convert to float first
+                    float_val = float(label)
+                    # Round to nearest integer for display
+                    labels.append(str(int(round(float_val))))
+                except (ValueError, TypeError):
+                    # If conversion fails, keep as string (strip whitespace)
+                    labels.append(str(label).strip())
             
             # Get the number of labels to show
             if axis == 'row':
