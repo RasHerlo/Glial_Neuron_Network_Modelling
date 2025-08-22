@@ -50,6 +50,22 @@ class FigureGenerationGUI:
                 "annotation_height_ratio": 0.035,  # 70% of original height (0.05 * 0.7)
                 "annotation_enabled_default": False
             }
+        },
+        "TuningCurve": {
+            "description": "Analyze neuron responses around stimulus events with tuning curves",
+            "file_types": [".npy", ".csv"],
+            "required_files": [
+                {"name": "raster_matrix", "label": "Raster", "description": "Raster matrix file (.npy)", "pattern": "Raster_matrix*", "extension": ".npy"},
+                {"name": "annotation", "label": "Annotation File", "description": "Binary vector indicating stimulus periods (.csv)", "pattern": "*", "extension": ".csv"}
+            ],
+            "controls": {
+                "frames_before_default": 20,
+                "frames_after_default": 200,
+                "index_point_default": 0,
+                "index_point_enabled_default": False,
+                "convert_to_seconds_default": False,
+                "framerate_default": 10.02
+            }
         }
     }
     
@@ -498,6 +514,8 @@ class FigureGenerationGUI:
         # Handle RasterPlot mode specifically
         if mode == "RasterPlot":
             self.create_rasterplot_file_widgets(mode_config)
+        elif mode == "TuningCurve":
+            self.create_tuning_curve_file_widgets(mode_config)
         else:
             # Generic file widgets for other modes
             self.create_generic_file_widgets(mode_config)
@@ -717,6 +735,110 @@ class FigureGenerationGUI:
             'name_entry': annotation_name_entry
         }
     
+    def create_tuning_curve_file_widgets(self, mode_config):
+        """Create TuningCurve-specific file selection widgets."""
+        # Initialize TuningCurve-specific variables
+        self.tuning_frames_before = tk.StringVar(value=str(mode_config['controls']['frames_before_default']))
+        self.tuning_frames_after = tk.StringVar(value=str(mode_config['controls']['frames_after_default']))
+        self.tuning_current_neuron = tk.StringVar(value="1")
+        
+        # Create main container with left and right sections
+        main_container = ttk.Frame(self.file_requirements_container)
+        main_container.pack(fill="x", pady=5)
+        
+        # Left side: File selections
+        left_frame = ttk.Frame(main_container)
+        left_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        
+        # Right side: Controls
+        right_frame = ttk.Frame(main_container)
+        right_frame.pack(side="right", fill="y")
+        
+        # === LEFT SIDE: File Selections ===
+        
+        # Raster Matrix selection
+        raster_frame = ttk.Frame(left_frame)
+        raster_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(raster_frame, text="Raster:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        raster_var = tk.StringVar()
+        raster_combo = ttk.Combobox(raster_frame, textvariable=raster_var, state="readonly", width=40)
+        raster_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Filter for Raster_matrix* .npy files
+        if hasattr(self, 'available_files'):
+            raster_files = self.filter_files_by_type([".npy"], "Raster_matrix*")
+            raster_combo['values'] = raster_files
+        
+        raster_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Store reference
+        self.file_selection_widgets['raster_matrix'] = {
+            'var': raster_var,
+            'combo': raster_combo,
+            'frame': raster_frame,
+            'config': mode_config['required_files'][0]
+        }
+        
+        # Annotation File selection
+        annotation_frame = ttk.Frame(left_frame)
+        annotation_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(annotation_frame, text="Annotation File:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        annotation_var = tk.StringVar()
+        annotation_combo = ttk.Combobox(annotation_frame, textvariable=annotation_var, state="readonly", width=40)
+        annotation_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Populate with binary vector files
+        if hasattr(self, 'available_files'):
+            binary_vector_files = self.detect_binary_vector_files()
+            annotation_combo['values'] = binary_vector_files
+        
+        annotation_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Store reference
+        self.file_selection_widgets['annotation'] = {
+            'var': annotation_var,
+            'combo': annotation_combo,
+            'frame': annotation_frame,
+            'config': mode_config['required_files'][1]
+        }
+        
+        # === RIGHT SIDE: Controls ===
+        
+        # Time Window Controls
+        time_frame = ttk.LabelFrame(right_frame, text="Time Window", padding=5)
+        time_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(time_frame, text="Before:").grid(row=0, column=0, sticky="w", padx=2)
+        frames_before_spinbox = ttk.Spinbox(time_frame, textvariable=self.tuning_frames_before, 
+                                          from_=0, to=1000, width=6)
+        frames_before_spinbox.grid(row=0, column=1, padx=2, pady=1)
+        frames_before_spinbox.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        ttk.Label(time_frame, text="After:").grid(row=1, column=0, sticky="w", padx=2)
+        frames_after_spinbox = ttk.Spinbox(time_frame, textvariable=self.tuning_frames_after, 
+                                         from_=0, to=1000, width=6)
+        frames_after_spinbox.grid(row=1, column=1, padx=2, pady=1)
+        frames_after_spinbox.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        # Neuron Navigation Controls
+        nav_frame = ttk.LabelFrame(right_frame, text="Neuron Navigation", padding=5)
+        nav_frame.pack(fill="x", pady=2)
+        
+        ttk.Button(nav_frame, text="◀", width=3,
+                  command=self.previous_neuron).grid(row=0, column=0, padx=1)
+        
+        neuron_spinbox = ttk.Spinbox(nav_frame, textvariable=self.tuning_current_neuron, 
+                                   from_=1, to=1000, width=6)
+        neuron_spinbox.grid(row=0, column=1, padx=2, pady=1)
+        neuron_spinbox.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        ttk.Button(nav_frame, text="▶", width=3,
+                  command=self.next_neuron).grid(row=0, column=2, padx=1)
+    
     def filter_files_by_type(self, allowed_extensions, pattern=None):
         """Filter available files by allowed extensions and optional pattern."""
         if not hasattr(self, 'available_files'):
@@ -804,10 +926,18 @@ class FigureGenerationGUI:
     
     def validate_required_files(self):
         """Validate that all required (non-optional) files are selected."""
-        # For RasterPlot, only raster_matrix is required
         mode = self.inspection_mode_var.get()
+        
+        # For RasterPlot, only raster_matrix is required
         if mode == "RasterPlot":
             return 'raster_matrix' in self.file_selection_widgets and self.file_selection_widgets['raster_matrix']['var'].get()
+        
+        # For TuningCurve, both raster_matrix and annotation are required
+        elif mode == "TuningCurve":
+            return ('raster_matrix' in self.file_selection_widgets and 
+                    self.file_selection_widgets['raster_matrix']['var'].get() and
+                    'annotation' in self.file_selection_widgets and 
+                    self.file_selection_widgets['annotation']['var'].get())
         
         # For other modes, check all non-optional files
         for file_name, widget_info in self.file_selection_widgets.items():
@@ -883,6 +1013,8 @@ class FigureGenerationGUI:
         
         if mode == "RasterPlot":
             self.create_rasterplot_controls(frame, mode_config)
+        elif mode == "TuningCurve":
+            self.create_tuning_curve_controls(frame, mode_config)
         else:
             # Placeholder for other custom modes
             placeholder_label = ttk.Label(frame, 
@@ -902,10 +1034,66 @@ class FigureGenerationGUI:
         colormap_combo.grid(row=0, column=1, padx=5, pady=2)
         colormap_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
     
-
+    def create_tuning_curve_controls(self, parent_frame, mode_config):
+        """Create TuningCurve-specific controls."""
+        # Initialize control variables (only for controls that remain here)
+        self.tuning_index_point = tk.StringVar(value=str(mode_config['controls']['index_point_default']))
+        self.tuning_index_point_enabled = tk.BooleanVar(value=mode_config['controls']['index_point_enabled_default'])
+        self.tuning_convert_to_seconds = tk.BooleanVar(value=mode_config['controls']['convert_to_seconds_default'])
+        self.tuning_framerate = tk.StringVar(value=str(mode_config['controls']['framerate_default']))
+        
+        # Index Point Controls
+        index_frame = ttk.LabelFrame(parent_frame, text="Index Point", padding=5)
+        index_frame.pack(fill="x", pady=5)
+        
+        ttk.Checkbutton(index_frame, text="Enable Index Point", variable=self.tuning_index_point_enabled,
+                       command=self.update_inspection_figure).grid(row=0, column=0, sticky="w", padx=5)
+        
+        ttk.Label(index_frame, text="Offset from Stimulus:").grid(row=0, column=1, sticky="w", padx=5)
+        index_point_spinbox = ttk.Spinbox(index_frame, textvariable=self.tuning_index_point, 
+                                        from_=-1000, to=1000, width=8)
+        index_point_spinbox.grid(row=0, column=2, padx=5, pady=2)
+        index_point_spinbox.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        # Time Conversion Controls
+        time_conv_frame = ttk.LabelFrame(parent_frame, text="Time Conversion", padding=5)
+        time_conv_frame.pack(fill="x", pady=5)
+        
+        ttk.Checkbutton(time_conv_frame, text="Convert to Seconds", variable=self.tuning_convert_to_seconds,
+                       command=self.update_inspection_figure).grid(row=0, column=0, sticky="w", padx=5)
+        
+        ttk.Label(time_conv_frame, text="Frame Rate (Hz):").grid(row=0, column=1, sticky="w", padx=5)
+        framerate_entry = ttk.Entry(time_conv_frame, textvariable=self.tuning_framerate, width=10)
+        framerate_entry.grid(row=0, column=2, padx=5, pady=2)
+        framerate_entry.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
     
-
+    def previous_neuron(self):
+        """Navigate to previous neuron."""
+        try:
+            current = int(self.tuning_current_neuron.get())
+            if current > 1:
+                self.tuning_current_neuron.set(str(current - 1))
+                self.update_inspection_figure()
+        except ValueError:
+            pass
     
+    def next_neuron(self):
+        """Navigate to next neuron."""
+        try:
+            current = int(self.tuning_current_neuron.get())
+            # Get maximum neuron count from raster data if available
+            max_neurons = self.get_max_neurons()
+            if current < max_neurons:
+                self.tuning_current_neuron.set(str(current + 1))
+                self.update_inspection_figure()
+        except ValueError:
+            pass
+    
+    def get_max_neurons(self):
+        """Get the maximum number of neurons from the current raster data."""
+        if hasattr(self, 'current_raster_data') and self.current_raster_data is not None:
+            return self.current_raster_data.shape[0]
+        return 1000  # Default fallback
     def load_and_display_data(self):
         """Load the selected file and display initial figure."""
         if not self.selected_file or not self.selected_dataset:
@@ -1016,6 +1204,8 @@ class FigureGenerationGUI:
         
         if mode == "RasterPlot":
             self.generate_rasterplot_figure()
+        elif mode == "TuningCurve":
+            self.generate_tuning_curve_figure()
         else:
             # Placeholder for other custom modes
             self.inspection_ax.text(0.5, 0.5, f"Figure generation for '{mode}' mode\nwill be implemented based on:\n\n{mode_config.get('description', 'No description available')}", 
@@ -1154,6 +1344,231 @@ class FigureGenerationGUI:
                                   ha='center', va='center', transform=self.inspection_ax.transAxes,
                                   fontsize=10, color='red')
             print(f"RasterPlot error: {e}")
+    
+    def generate_tuning_curve_figure(self):
+        """Generate Tuning Curve visualization."""
+        try:
+            # Check if required files are selected
+            if ('raster_matrix' not in self.file_selection_widgets or 
+                not self.file_selection_widgets['raster_matrix']['var'].get() or
+                'annotation' not in self.file_selection_widgets or
+                not self.file_selection_widgets['annotation']['var'].get()):
+                
+                self.inspection_ax.text(0.5, 0.5, 'Please select both Raster matrix and Annotation files', 
+                                      ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                      fontsize=12, alpha=0.7)
+                return
+            
+            # Load raster matrix
+            raster_file = self.file_selection_widgets['raster_matrix']['var'].get()
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            raster_path = os.path.join(dataset_path, raster_file)
+            raster_matrix = np.load(raster_path)
+            self.current_raster_data = raster_matrix  # Store for navigation
+            
+            # Load annotation data
+            annotation_file = self.file_selection_widgets['annotation']['var'].get()
+            annotation_path = os.path.join(dataset_path, annotation_file)
+            annotation_df = pd.read_csv(annotation_path)
+            annotation_data = annotation_df.iloc[:, 0].values
+            
+            # Get parameters
+            frames_before = int(self.tuning_frames_before.get())
+            frames_after = int(self.tuning_frames_after.get())
+            current_neuron_idx = int(self.tuning_current_neuron.get()) - 1  # Convert to 0-based index
+            
+            # Validate neuron index
+            if current_neuron_idx < 0 or current_neuron_idx >= raster_matrix.shape[0]:
+                self.inspection_ax.text(0.5, 0.5, f'Invalid neuron index. Please select between 1 and {raster_matrix.shape[0]}', 
+                                      ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                      fontsize=12, color='red')
+                return
+            
+            # Detect stimulus starts (0->1 transitions)
+            stimulus_starts = self.detect_stimulus_starts(annotation_data)
+            
+            if len(stimulus_starts) == 0:
+                self.inspection_ax.text(0.5, 0.5, 'No stimulus events detected in annotation file', 
+                                      ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                      fontsize=12, color='red')
+                return
+            
+            # Extract stimulus windows
+            stimulus_windows = self.extract_stimulus_windows(raster_matrix, stimulus_starts, frames_before, frames_after)
+            
+            if len(stimulus_windows) == 0:
+                self.inspection_ax.text(0.5, 0.5, 'No valid stimulus windows found', 
+                                      ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                      fontsize=12, color='red')
+                return
+            
+            # Calculate tuning curves
+            single_neuron_curve, single_neuron_std = self.calculate_single_neuron_tuning_curve(
+                stimulus_windows, current_neuron_idx)
+            population_curve, population_std = self.calculate_population_tuning_curve(stimulus_windows)
+            
+            # Create time axis
+            total_frames = frames_before + frames_after + 1
+            time_axis = np.arange(-frames_before, frames_after + 1)
+            
+            # Convert to seconds if requested
+            if self.tuning_convert_to_seconds.get():
+                try:
+                    framerate = float(self.tuning_framerate.get())
+                    time_axis = time_axis / framerate
+                    time_unit = "seconds"
+                except ValueError:
+                    time_unit = "frames"
+            else:
+                time_unit = "frames"
+            
+            # Clear figure and create subplots
+            self.inspection_fig.clear()
+            gs = self.inspection_fig.add_gridspec(2, 1, hspace=0.3)
+            
+            # Upper subplot: Single neuron
+            ax_single = self.inspection_fig.add_subplot(gs[0])
+            ax_single.plot(time_axis, single_neuron_curve, 'b-', linewidth=2, label=f'Neuron {current_neuron_idx + 1}')
+            ax_single.fill_between(time_axis, 
+                                 single_neuron_curve - single_neuron_std,
+                                 single_neuron_curve + single_neuron_std,
+                                 alpha=0.3, color='blue')
+            ax_single.set_ylabel('Neural Activity')
+            ax_single.set_title(f'Neuron {current_neuron_idx + 1} Tuning Curve')
+            ax_single.grid(True, alpha=0.3)
+            
+            # Add index point if enabled
+            if self.tuning_index_point_enabled.get():
+                try:
+                    index_offset = int(self.tuning_index_point.get())
+                    if self.tuning_convert_to_seconds.get():
+                        index_x = index_offset / framerate
+                    else:
+                        index_x = index_offset
+                    ax_single.axvline(x=index_x, color='red', linestyle='--', alpha=0.7, label='Index Point')
+                    ax_single.legend()
+                except ValueError:
+                    pass
+            
+            # Lower subplot: Population average
+            ax_pop = self.inspection_fig.add_subplot(gs[1])
+            ax_pop.plot(time_axis, population_curve, 'g-', linewidth=2, label='Population Average')
+            ax_pop.fill_between(time_axis, 
+                               population_curve - population_std,
+                               population_curve + population_std,
+                               alpha=0.3, color='green')
+            ax_pop.set_xlabel(f'Time relative to stimulus ({time_unit})')
+            ax_pop.set_ylabel('Neural Activity')
+            ax_pop.set_title('Population Average Tuning Curve')
+            ax_pop.grid(True, alpha=0.3)
+            
+            # Add index point if enabled
+            if self.tuning_index_point_enabled.get():
+                try:
+                    index_offset = int(self.tuning_index_point.get())
+                    if self.tuning_convert_to_seconds.get():
+                        index_x = index_offset / framerate
+                    else:
+                        index_x = index_offset
+                    ax_pop.axvline(x=index_x, color='red', linestyle='--', alpha=0.7, label='Index Point')
+                    ax_pop.legend()
+                except ValueError:
+                    pass
+            
+            # Add stimulus start marker (always at 0)
+            ax_single.axvline(x=0, color='black', linestyle='-', alpha=0.5, linewidth=1)
+            ax_pop.axvline(x=0, color='black', linestyle='-', alpha=0.5, linewidth=1)
+            
+            # Update the main inspection_ax reference for consistency
+            self.inspection_ax = ax_pop
+            
+        except Exception as e:
+            # Clear figure and show error
+            self.inspection_fig.clear()
+            self.inspection_ax = self.inspection_fig.add_subplot(111)
+            self.inspection_ax.text(0.5, 0.5, f'Error generating Tuning Curve:\n{str(e)}', 
+                                  ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                  fontsize=10, color='red')
+            print(f"TuningCurve error: {e}")
+    
+    def detect_stimulus_starts(self, annotation_data):
+        """Detect stimulus start points as 0->1 transitions."""
+        stimulus_starts = []
+        for i in range(1, len(annotation_data)):
+            if annotation_data[i-1] == 0 and annotation_data[i] == 1:
+                stimulus_starts.append(i)
+        return stimulus_starts
+    
+    def extract_stimulus_windows(self, raster_matrix, stimulus_starts, frames_before, frames_after):
+        """Extract time windows around stimulus events."""
+        stimulus_windows = []
+        
+        for start_idx in stimulus_starts:
+            # Calculate window boundaries
+            window_start = start_idx - frames_before
+            window_end = start_idx + frames_after + 1
+            
+            # Check if window is within bounds
+            if window_start >= 0 and window_end <= raster_matrix.shape[1]:
+                window_data = raster_matrix[:, window_start:window_end]
+                stimulus_windows.append(window_data)
+        
+        return stimulus_windows
+    
+    def calculate_single_neuron_tuning_curve(self, stimulus_windows, neuron_idx):
+        """Calculate mean and std for a single neuron across all stimulus windows."""
+        if len(stimulus_windows) == 0:
+            return np.array([]), np.array([])
+        
+        # Extract neuron data from all windows
+        neuron_traces = []
+        for window in stimulus_windows:
+            neuron_traces.append(window[neuron_idx, :])
+        
+        # Convert to numpy array and calculate statistics
+        neuron_traces = np.array(neuron_traces)
+        mean_trace = np.mean(neuron_traces, axis=0)
+        std_trace = np.std(neuron_traces, axis=0)
+        
+        return mean_trace, std_trace
+    
+    def calculate_population_tuning_curve(self, stimulus_windows):
+        """Calculate weighted population average across all neurons."""
+        if len(stimulus_windows) == 0:
+            return np.array([]), np.array([])
+        
+        # Get dimensions
+        n_neurons = stimulus_windows[0].shape[0]
+        window_length = stimulus_windows[0].shape[1]
+        
+        # Calculate individual neuron curves
+        all_means = []
+        all_stds = []
+        
+        for neuron_idx in range(n_neurons):
+            mean_trace, std_trace = self.calculate_single_neuron_tuning_curve(stimulus_windows, neuron_idx)
+            all_means.append(mean_trace)
+            all_stds.append(std_trace)
+        
+        all_means = np.array(all_means)
+        all_stds = np.array(all_stds)
+        
+        # Calculate weighted average (weight = 1/std, avoid division by zero)
+        weights = np.where(all_stds > 0, 1.0 / all_stds, 0)
+        
+        # Normalize weights for each time point
+        weight_sums = np.sum(weights, axis=0)
+        weight_sums = np.where(weight_sums > 0, weight_sums, 1)  # Avoid division by zero
+        
+        # Calculate weighted mean
+        weighted_mean = np.sum(all_means * weights, axis=0) / weight_sums
+        
+        # Calculate combined standard deviation
+        # Using weighted standard deviation formula
+        weighted_variance = np.sum(weights * (all_means - weighted_mean)**2, axis=0) / weight_sums
+        combined_std = np.sqrt(weighted_variance)
+        
+        return weighted_mean, combined_std
     
     def render_annotation(self, annotation_ax, annotation_data, annotation_name):
         """Render the annotation bar above the raster plot."""
