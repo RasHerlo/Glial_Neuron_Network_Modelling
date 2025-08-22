@@ -39,13 +39,16 @@ class FigureGenerationGUI:
             "required_files": [
                 {"name": "raster_matrix", "label": "Raster", "description": "Raster matrix file (.npy)", "pattern": "Raster_matrix*", "extension": ".npy"},
                 {"name": "row_labels", "label": "Row Labels", "description": "Row labels file (.csv)", "pattern": "*row_labels", "extension": ".csv", "optional": True},
-                {"name": "column_labels", "label": "Column Labels", "description": "Column labels file (.csv)", "pattern": "*column_labels", "extension": ".csv", "optional": True}
+                {"name": "column_labels", "label": "Column Labels", "description": "Column labels file (.csv)", "pattern": "*column_labels", "extension": ".csv", "optional": True},
+                {"name": "annotation", "label": "Annotation", "description": "Binary vector file for annotations (.csv)", "pattern": "*", "extension": ".csv", "optional": True}
             ],
             "controls": {
                 "colormap": ["binary", "jet", "viridis", "gist_earth"],
                 "row_title_default": "Neurons",
                 "column_title_default": "Time",
-                "label_count_default": 6
+                "label_count_default": 6,
+                "annotation_height_ratio": 0.035,  # 70% of original height (0.05 * 0.7)
+                "annotation_enabled_default": False
             }
         }
     }
@@ -551,6 +554,10 @@ class FigureGenerationGUI:
         self.raster_column_label_count = tk.StringVar(value=str(mode_config['controls']['label_count_default']))
         self.raster_column_title = tk.StringVar(value=mode_config['controls']['column_title_default'])
         
+        # Initialize annotation variables
+        self.raster_annotation_enabled = tk.BooleanVar(value=mode_config['controls']['annotation_enabled_default'])
+        self.raster_annotation_name = tk.StringVar(value="")
+        
         # Raster Matrix selection
         raster_frame = ttk.Frame(self.file_requirements_container)
         raster_frame.pack(fill="x", pady=2)
@@ -659,6 +666,56 @@ class FigureGenerationGUI:
             'frame': column_labels_frame,
             'config': mode_config['required_files'][2]
         }
+        
+        # Annotation section
+        annotation_frame = ttk.Frame(self.file_requirements_container)
+        annotation_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(annotation_frame, text="Annotation:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        annotation_var = tk.StringVar()
+        annotation_combo = ttk.Combobox(annotation_frame, textvariable=annotation_var, state="readonly", width=30)
+        annotation_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Populate with binary vector files
+        if hasattr(self, 'available_files'):
+            binary_vector_files = self.detect_binary_vector_files()
+            annotation_combo['values'] = binary_vector_files
+        
+        annotation_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Checkbox for enabling annotations
+        ttk.Checkbutton(annotation_frame, text="Enable", variable=self.raster_annotation_enabled,
+                       command=self.update_inspection_figure).grid(row=0, column=2, padx=5)
+        
+        # Annotation name input (below the dropdown)
+        annotation_name_frame = ttk.Frame(self.file_requirements_container)
+        annotation_name_frame.pack(fill="x", pady=2)
+        ttk.Label(annotation_name_frame, text="Annotation Name:").grid(row=0, column=0, sticky="w", padx=5)
+        annotation_name_entry = ttk.Entry(annotation_name_frame, textvariable=self.raster_annotation_name, width=30)
+        annotation_name_entry.grid(row=0, column=1, padx=5, pady=2)
+        annotation_name_entry.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        # Bind annotation file selection to update name field
+        def on_annotation_file_change(event=None):
+            selected_file = annotation_var.get()
+            if selected_file and not self.raster_annotation_name.get():
+                # Set default name to filename without extension
+                default_name = os.path.splitext(os.path.basename(selected_file))[0]
+                self.raster_annotation_name.set(default_name)
+            self.on_required_file_change(event)
+        
+        annotation_combo.bind('<<ComboboxSelected>>', on_annotation_file_change)
+        
+        # Store reference
+        self.file_selection_widgets['annotation'] = {
+            'var': annotation_var,
+            'combo': annotation_combo,
+            'frame': annotation_frame,
+            'config': mode_config['required_files'][3],
+            'name_var': self.raster_annotation_name,
+            'name_entry': annotation_name_entry
+        }
     
     def filter_files_by_type(self, allowed_extensions, pattern=None):
         """Filter available files by allowed extensions and optional pattern."""
@@ -683,6 +740,57 @@ class FigureGenerationGUI:
             filtered_files.append(file_path)
         
         return filtered_files
+    
+    def detect_binary_vector_files(self):
+        """Detect CSV files that contain binary 1D vectors (only 0s and 1s)."""
+        if not hasattr(self, 'available_files') or not self.selected_dataset:
+            return []
+        
+        binary_vector_files = []
+        dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+        
+        # Only check CSV files in the matrices folder
+        csv_files = [f for f in self.available_files if f.endswith('.csv') and 'matrices' in f]
+        
+        for file_path in csv_files:
+            try:
+                full_path = os.path.join(dataset_path, file_path)
+                
+                # Skip known 2D matrix files
+                filename = os.path.basename(file_path).lower()
+                if 'raster_matrix' in filename and not ('row_labels' in filename or 'column_labels' in filename):
+                    continue
+                
+                # Read the CSV file
+                df = pd.read_csv(full_path)
+                
+                # Check if it's a single column (1D vector)
+                if df.shape[1] != 1:
+                    continue
+                
+                # Get the data column (skip header)
+                data_column = df.iloc[:, 0]
+                
+                # Check if all values are numeric and only 0s and 1s
+                try:
+                    # Convert to numeric, will raise exception if non-numeric
+                    numeric_data = pd.to_numeric(data_column, errors='raise')
+                    
+                    # Check if all values are 0 or 1
+                    unique_values = set(numeric_data.dropna().unique())
+                    if unique_values.issubset({0, 1, 0.0, 1.0}):
+                        binary_vector_files.append(file_path)
+                        
+                except (ValueError, TypeError):
+                    # Skip files with non-numeric data
+                    continue
+                    
+            except Exception as e:
+                # Skip files that can't be read or processed
+                print(f"Error checking file {file_path}: {e}")
+                continue
+        
+        return binary_vector_files
     
     def on_required_file_change(self, event=None):
         """Handle changes in required file selections."""
@@ -932,7 +1040,56 @@ class FigureGenerationGUI:
             # Load matrix data
             raster_matrix = np.load(raster_path)
             
-            # Create the plot
+            # Check if annotation is enabled and available
+            show_annotation = (self.raster_annotation_enabled.get() and 
+                             'annotation' in self.file_selection_widgets and 
+                             self.file_selection_widgets['annotation']['var'].get())
+            
+            annotation_data = None
+            if show_annotation:
+                try:
+                    annotation_file = self.file_selection_widgets['annotation']['var'].get()
+                    annotation_path = os.path.join(dataset_path, annotation_file)
+                    annotation_df = pd.read_csv(annotation_path)
+                    annotation_data = annotation_df.iloc[:, 0].values  # Get first column as numpy array
+                    
+                    # Ensure annotation data matches matrix width
+                    if len(annotation_data) != raster_matrix.shape[1]:
+                        print(f"Warning: Annotation length ({len(annotation_data)}) doesn't match matrix width ({raster_matrix.shape[1]})")
+                        # Resize annotation data to match matrix width
+                        if len(annotation_data) > raster_matrix.shape[1]:
+                            annotation_data = annotation_data[:raster_matrix.shape[1]]
+                        else:
+                            # Pad with zeros if annotation is shorter
+                            padded_data = np.zeros(raster_matrix.shape[1])
+                            padded_data[:len(annotation_data)] = annotation_data
+                            annotation_data = padded_data
+                            
+                except Exception as e:
+                    print(f"Error loading annotation data: {e}")
+                    show_annotation = False
+                    annotation_data = None
+            
+            # Clear the figure and create new subplots if needed
+            self.inspection_fig.clear()
+            
+            if show_annotation and annotation_data is not None:
+                # Create subplots with annotation
+                height_ratios = [self.MODE_DEFINITIONS["RasterPlot"]["controls"]["annotation_height_ratio"], 1.0]
+                gs = self.inspection_fig.add_gridspec(2, 1, height_ratios=height_ratios, hspace=0.02)
+                
+                # Annotation subplot (top)
+                annotation_ax = self.inspection_fig.add_subplot(gs[0])
+                annotation_name = self.raster_annotation_name.get() or os.path.splitext(os.path.basename(annotation_file))[0]
+                self.render_annotation(annotation_ax, annotation_data, annotation_name)
+                
+                # Main raster plot subplot (bottom)
+                self.inspection_ax = self.inspection_fig.add_subplot(gs[1])
+            else:
+                # Single subplot for raster plot only
+                self.inspection_ax = self.inspection_fig.add_subplot(111)
+            
+            # Create the main raster plot
             colormap = self.raster_colormap.get()
             im = self.inspection_ax.imshow(raster_matrix, cmap=colormap, aspect='auto')
             
@@ -947,7 +1104,13 @@ class FigureGenerationGUI:
                 title_suffix = "matrix"
             
             figure_title = f"{dataset_name} {title_suffix}"
-            self.inspection_ax.set_title(figure_title)
+            
+            # Set title on the figure or the top subplot
+            if show_annotation and annotation_data is not None:
+                # Move title higher when annotation is present to avoid overlap
+                self.inspection_fig.suptitle(figure_title, fontsize=12, y=0.98)
+            else:
+                self.inspection_ax.set_title(figure_title)
             
             # Set axis labels
             self.inspection_ax.set_xlabel(self.raster_column_title.get())
@@ -991,6 +1154,41 @@ class FigureGenerationGUI:
                                   ha='center', va='center', transform=self.inspection_ax.transAxes,
                                   fontsize=10, color='red')
             print(f"RasterPlot error: {e}")
+    
+    def render_annotation(self, annotation_ax, annotation_data, annotation_name):
+        """Render the annotation bar above the raster plot."""
+        try:
+            # Create a 2D array for visualization (single row)
+            annotation_2d = annotation_data.reshape(1, -1)
+            
+            # Create custom colormap: 0=white, 1=black
+            from matplotlib.colors import ListedColormap
+            colors = ['white', 'black']
+            annotation_cmap = ListedColormap(colors)
+            
+            # Display the annotation as an image
+            annotation_ax.imshow(annotation_2d, cmap=annotation_cmap, aspect='auto', vmin=0, vmax=1)
+            
+            # Remove ticks and labels from annotation subplot
+            annotation_ax.set_xticks([])
+            annotation_ax.set_yticks([])
+            
+            # Add custom annotation name on the left side in small font
+            annotation_ax.text(-0.02, 0.5, annotation_name, transform=annotation_ax.transAxes, 
+                             fontsize=8, ha='right', va='center', rotation=0)
+            
+            # Remove spines except bottom to connect with main plot
+            annotation_ax.spines['top'].set_visible(False)
+            annotation_ax.spines['left'].set_visible(False)
+            annotation_ax.spines['right'].set_visible(False)
+            annotation_ax.spines['bottom'].set_visible(True)
+            
+        except Exception as e:
+            print(f"Error rendering annotation: {e}")
+            # Show error text in annotation area
+            annotation_ax.text(0.5, 0.5, f'Error: {str(e)}', 
+                             ha='center', va='center', transform=annotation_ax.transAxes,
+                             fontsize=8, color='red')
     
     def apply_axis_labels(self, raster_path, labels_file, axis, axis_length):
         """Apply labels to the specified axis with equal spacing."""
