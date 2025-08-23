@@ -201,11 +201,11 @@ class MatrixExtractionProcessor(BaseProcessor):
         np.save(npy_path, matrix.values)
         
         # Save row labels as CSV
-        row_labels_path = os.path.join(output_dir, f"{matrix_name}_row_labels.csv")
+        row_labels_path = os.path.join(output_dir, f"{matrix_name}_row_labels_and_indices.csv")
         pd.DataFrame({'row_labels': row_labels}).to_csv(row_labels_path, index=False)
         
         # Save column labels as CSV
-        col_labels_path = os.path.join(output_dir, f"{matrix_name}_column_labels.csv")
+        col_labels_path = os.path.join(output_dir, f"{matrix_name}_column_labels_and_indices.csv")
         pd.DataFrame({'column_labels': col_labels}).to_csv(col_labels_path, index=False)
         
         return output_dir
@@ -838,6 +838,118 @@ class DataAnnotationProcessor(BaseProcessor):
             }
 
 
+class IndexingProcessor(BaseProcessor):
+    """Processor for generating sorting indices for matrix rows and columns."""
+    
+    def __init__(self):
+        super().__init__("Indexing")
+        self.description = "Generate sorting indices for matrix rows and columns"
+    
+    def get_default_parameters(self) -> Dict[str, Any]:
+        return {
+            'indexing_type': 'Row Indexing',
+            'matrix_name': 'Raster'
+        }
+    
+    def get_progress_steps(self) -> List[str]:
+        """Return progress step descriptions for Indexing."""
+        return [
+            "Loading label files",
+            "Validating file structure",
+            "Processing indexing",
+            "Completed"
+        ]
+    
+    def validate_parameters(self, parameters: Dict[str, Any]) -> bool:
+        """Validate indexing parameters."""
+        required_params = ['indexing_type', 'matrix_name', 'dataset_name']
+        for param in required_params:
+            if param not in parameters:
+                return False
+        
+        if parameters['indexing_type'] not in ['Row Indexing', 'Column Indexing']:
+            return False
+        
+        return True
+    
+    def process_with_progress(self, parameters: Dict[str, Any] = None, 
+                            progress_callback: Callable[[float], None] = None) -> Dict[str, Any]:
+        """Process the indexing operation."""
+        if parameters is None:
+            parameters = self.get_default_parameters()
+        
+        def update_progress(percent: float):
+            if progress_callback:
+                progress_callback(percent)
+        
+        try:
+            # Step 1: Loading label files (25%)
+            update_progress(25.0)
+            
+            dataset_name = parameters['dataset_name']
+            matrix_name = parameters['matrix_name']
+            indexing_type = parameters['indexing_type']
+            
+            # Determine which file to process
+            if indexing_type == 'Row Indexing':
+                file_name = f"{matrix_name}_row_labels_and_indices.csv"
+            else:  # Column Indexing
+                file_name = f"{matrix_name}_column_labels_and_indices.csv"
+            
+            file_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", file_name)
+            
+            # Check if file exists
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"Label file not found: {file_path}")
+            
+            # Step 2: Validating file structure (50%)
+            update_progress(50.0)
+            
+            # Load the file to validate structure
+            labels_df = pd.read_csv(file_path)
+            
+            # Basic validation - should have at least one column
+            if labels_df.empty:
+                raise ValueError(f"Label file is empty: {file_path}")
+            
+            # Step 3: Processing indexing (75%)
+            update_progress(75.0)
+            
+            # TODO: Add actual indexing logic here in future implementation
+            # For now, just validate that the file can be processed
+            
+            # Step 4: Completed (100%)
+            update_progress(100.0)
+            
+            return {
+                'success': True,
+                'data': labels_df,
+                'statistics': {
+                    'indexing_type': indexing_type,
+                    'matrix_name': matrix_name,
+                    'file_path': file_path,
+                    'labels_count': len(labels_df)
+                },
+                'output_path': file_path,
+                'message': f'Indexing validation completed for {indexing_type}. File: {file_path}, Labels: {len(labels_df)}'
+            }
+            
+        except FileNotFoundError as e:
+            return {
+                'success': False,
+                'data': None,
+                'statistics': None,
+                'message': f'Label file not found: {str(e)}'
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'data': None,
+                'statistics': None,
+                'message': f'Indexing failed: {str(e)}'
+            }
+
+
 class DataProcessingManager:
     """Manager class for coordinating different data processors."""
     
@@ -845,7 +957,8 @@ class DataProcessingManager:
         self.processors = {
             'Matrix Extraction': MatrixExtractionProcessor(),
             'Matrix Modification': MatrixModificationProcessor(),
-            'Data Annotation': DataAnnotationProcessor()
+            'Data Annotation': DataAnnotationProcessor(),
+            'Indexing': IndexingProcessor()
         }
     
     def get_processor(self, processor_name: str) -> Optional[BaseProcessor]:

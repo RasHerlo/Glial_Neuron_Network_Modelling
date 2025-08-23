@@ -432,7 +432,7 @@ class DataProcessingGUI:
                     rows, cols = first_shape
                     dimension_options = [f"rows = {rows}", f"columns = {cols}"]
                 else:
-                    # Use fallback dimensions
+                    # Fallback dimensions
                     dimension_options = ["rows = 1215", "columns = 1000"]
                 
                 self.dimension_combo['values'] = dimension_options
@@ -445,6 +445,37 @@ class DataProcessingGUI:
                 print(f"Error updating dimension dropdown: {e}")
                 self.dimension_combo['values'] = ["rows = 1215", "columns = 1000"]
     
+    def create_indexing_params(self):
+        """Create parameter widgets for Indexing."""
+        # Clear existing params
+        for widget in self.params_frame.winfo_children():
+            widget.destroy()
+        self.param_vars.clear()
+        
+        # Indexing parameters
+        params = [
+            ("indexing_type", "Indexing Type:", "Row Indexing", "combo", ["Row Indexing", "Column Indexing"]),
+            ("matrix_name", "Matrix Name:", "Raster", "str")
+        ]
+        
+        for i, (key, label, default, param_type, *args) in enumerate(params):
+            ttk.Label(self.params_frame, text=label).grid(row=i, column=0, sticky="w", padx=5)
+            
+            if param_type == "bool":
+                self.param_vars[key] = tk.BooleanVar(value=default)
+                ttk.Checkbutton(self.params_frame, variable=self.param_vars[key]).grid(
+                    row=i, column=1, sticky="w", padx=5)
+            elif param_type == "combo":
+                self.param_vars[key] = tk.StringVar(value=default)
+                combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars[key],
+                                   values=args[0] if args else [default],
+                                   state="readonly", width=18)
+                combo.grid(row=i, column=1, padx=5)
+            else:
+                self.param_vars[key] = tk.StringVar(value=str(default))
+                ttk.Entry(self.params_frame, textvariable=self.param_vars[key], 
+                         width=20).grid(row=i, column=1, padx=5)
+    
     def on_processing_type_change(self, event=None):
         """Update parameters based on processing type."""
         processing_type = self.processing_type_var.get()
@@ -455,6 +486,8 @@ class DataProcessingGUI:
             self.create_matrix_modification_params()
         elif processing_type == "Data Annotation":
             self.create_data_annotation_params()
+        elif processing_type == "Indexing":
+            self.create_indexing_params()
         else:
             # Fallback to Matrix Extraction for unknown types
             self.create_matrix_extraction_params()
@@ -540,6 +573,18 @@ class DataProcessingGUI:
                                      "Please provide at least one stimulation period with start and end times.")
                 return
         
+        # Additional validation for Indexing
+        if processing_type == "Indexing":
+            indexing_type = self.param_vars.get('indexing_type', tk.StringVar()).get()
+            if not indexing_type:
+                messagebox.showwarning("Missing Indexing Type", "Please select an indexing type (Row or Column).")
+                return
+            
+            matrix_name = self.param_vars.get('matrix_name', tk.StringVar()).get().strip()
+            if not matrix_name:
+                messagebox.showwarning("Missing Matrix Name", "Please provide a matrix name.")
+                return
+        
         try:
             # Collect parameters
             parameters = {}
@@ -574,6 +619,11 @@ class DataProcessingGUI:
                 # Generate job name from annotation name
                 annotation_name = parameters.get('annotation_name', 'annotation_vector')
                 job_name = f"Data_Annotation_{annotation_name}"
+            elif processing_type == "Indexing":
+                # Generate job name for Indexing
+                matrix_name = parameters.get('matrix_name', 'Raster')
+                indexing_type = parameters.get('indexing_type', 'Row Indexing')
+                job_name = f"Indexing_{matrix_name}_{indexing_type.replace(' ', '_')}"
             else:
                 # Generate job name from matrix name for other processing types
                 matrix_name = parameters.get('matrix_name', 'extracted_matrix')
