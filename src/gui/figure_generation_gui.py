@@ -344,8 +344,8 @@ class FigureGenerationGUI:
         # Data Selection Section (Top)
         self.create_inspection_data_selection(scrollable_frame)
         
-        # Required Files Section (Between Data Selection and Figure Display)
-        self.create_required_files_section(scrollable_frame)
+        # Required Files and Sorting Section (Between Data Selection and Figure Display)
+        self.create_required_files_and_sorting_section(scrollable_frame)
         
         # Figure Display Section (Middle)
         self.create_inspection_figure_display(scrollable_frame)
@@ -381,6 +381,94 @@ class FigureGenerationGUI:
         
         # Load datasets for inspection
         self.load_inspection_datasets()
+    
+    def create_required_files_and_sorting_section(self, parent):
+        """Create the required files and sorting section with horizontal layout."""
+        # Create main container frame for horizontal layout
+        self.files_and_sorting_container = ttk.Frame(parent)
+        self.files_and_sorting_container.pack(fill="x", padx=10, pady=5)
+        
+        # Required Files Section (Left side - 50% width)
+        self.required_files_frame = ttk.LabelFrame(self.files_and_sorting_container, text="Required Files", padding=10)
+        self.required_files_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        
+        # This will be populated dynamically based on selected mode
+        self.file_requirements_container = ttk.Frame(self.required_files_frame)
+        self.file_requirements_container.pack(fill="x")
+        
+        # Initially empty with instruction text
+        self.files_instruction_label = ttk.Label(self.file_requirements_container, 
+                                               text="Select a dataset and mode to see file requirements",
+                                               font=("Arial", 10), foreground="gray")
+        self.files_instruction_label.pack(pady=10)
+        
+        # Store file selection widgets for dynamic access
+        self.file_selection_widgets = {}
+        
+        # Sorting Section (Right side - 50% width)
+        self.create_sorting_section(self.files_and_sorting_container)
+    
+    def create_sorting_section(self, parent):
+        """Create the sorting section for RasterPlot mode."""
+        self.sorting_frame = ttk.LabelFrame(parent, text="Sorting", padding=10)
+        self.sorting_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
+        
+        # Initially hidden - will be shown when RasterPlot mode is selected
+        self.sorting_frame.pack_forget()
+        
+        # Row sorting controls
+        row_frame = ttk.Frame(self.sorting_frame)
+        row_frame.pack(fill="x", pady=2)
+        
+        self.sort_rows_var = tk.BooleanVar(value=False)
+        self.sort_rows_checkbox = ttk.Checkbutton(row_frame, text="Sort Rows", 
+                                                variable=self.sort_rows_var,
+                                                command=self.on_sorting_changed)
+        self.sort_rows_checkbox.pack(side="left", padx=(0, 5))
+        
+        ttk.Label(row_frame, text="Row Sorting Vector:").pack(side="left", padx=(0, 5))
+        self.row_sorting_vector_var = tk.StringVar()
+        self.row_sorting_vector_combo = ttk.Combobox(row_frame, 
+                                                    textvariable=self.row_sorting_vector_var,
+                                                    state="readonly", width=20)
+        self.row_sorting_vector_combo.pack(side="left", padx=(0, 5))
+        
+        # Row sorting direction
+        self.row_sort_ascending_var = tk.BooleanVar(value=True)
+        self.row_sort_ascending_checkbox = ttk.Checkbutton(row_frame, text="Ascending", 
+                                                         variable=self.row_sort_ascending_var,
+                                                         command=self.on_sorting_changed)
+        self.row_sort_ascending_checkbox.pack(side="left", padx=(0, 5))
+        
+        # Column sorting controls
+        col_frame = ttk.Frame(self.sorting_frame)
+        col_frame.pack(fill="x", pady=2)
+        
+        self.sort_columns_var = tk.BooleanVar(value=False)
+        self.sort_columns_checkbox = ttk.Checkbutton(col_frame, text="Sort Columns", 
+                                                   variable=self.sort_columns_var,
+                                                   command=self.on_sorting_changed)
+        self.sort_columns_checkbox.pack(side="left", padx=(0, 5))
+        
+        ttk.Label(col_frame, text="Column Sorting Vector:").pack(side="left", padx=(0, 5))
+        self.column_sorting_vector_var = tk.StringVar()
+        self.column_sorting_vector_combo = ttk.Combobox(col_frame, 
+                                                       textvariable=self.column_sorting_vector_var,
+                                                       state="readonly", width=20)
+        self.column_sorting_vector_combo.pack(side="left", padx=(0, 5))
+        
+        # Column sorting direction
+        self.column_sort_ascending_var = tk.BooleanVar(value=True)
+        self.column_sort_ascending_checkbox = ttk.Checkbutton(col_frame, text="Ascending", 
+                                                            variable=self.column_sort_ascending_var,
+                                                            command=self.on_sorting_changed)
+        self.column_sort_ascending_checkbox.pack(side="left", padx=(0, 5))
+        
+        # Initially empty with instruction text
+        self.sorting_instruction_label = ttk.Label(self.sorting_frame, 
+                                                 text="Sorting options available for RasterPlot mode",
+                                                 font=("Arial", 10), foreground="gray")
+        self.sorting_instruction_label.pack(pady=10)
     
     def create_required_files_section(self, parent):
         """Create the required files section for mode-specific file selection."""
@@ -489,6 +577,10 @@ class FigureGenerationGUI:
             
             # Clear figure
             self.clear_inspection_figure()
+            
+            # Update sorting vectors if sorting section is visible
+            if hasattr(self, 'sorting_frame') and self.sorting_frame.winfo_ismapped():
+                self.populate_sorting_vectors()
     
     def load_dataset_files(self):
         """Load available files for the selected dataset."""
@@ -1048,6 +1140,9 @@ class FigureGenerationGUI:
         if not mode:
             return
         
+        # Show/hide sorting section based on mode
+        self.toggle_sorting_section(mode)
+        
         # Create required files widgets based on mode
         self.create_required_files_widgets(mode)
         
@@ -1153,6 +1248,125 @@ class FigureGenerationGUI:
                                     from_=-1000, to=1000, width=8)
         auc_end_spinbox.grid(row=2, column=3, padx=5, pady=2)
         auc_end_spinbox.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+
+    def toggle_sorting_section(self, mode):
+        """Show or hide the sorting section based on the selected mode."""
+        if mode == "RasterPlot":
+            self.sorting_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
+            self.populate_sorting_vectors()
+        else:
+            self.sorting_frame.pack_forget()
+    
+    def populate_sorting_vectors(self):
+        """Populate the sorting vector dropdowns with available files."""
+        if not self.selected_dataset:
+            return
+        
+        try:
+            # Get available files from the dataset
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            available_files = []
+            
+            if os.path.exists(dataset_path):
+                for file in os.listdir(dataset_path):
+                    if file.endswith('.csv'):
+                        available_files.append(file)
+            
+            # Update dropdowns
+            self.row_sorting_vector_combo['values'] = available_files
+            self.column_sorting_vector_combo['values'] = available_files
+            
+            # Clear current selections
+            self.row_sorting_vector_var.set('')
+            self.column_sorting_vector_var.set('')
+            
+        except Exception as e:
+            print(f"Error populating sorting vectors: {e}")
+    
+    def on_sorting_changed(self):
+        """Handle changes in sorting controls."""
+        # Update the figure when sorting options change
+        self.update_inspection_figure()
+    
+    def apply_sorting_to_matrix(self, matrix, row_labels=None, column_labels=None):
+        """Apply sorting to the matrix based on current sorting settings."""
+        if matrix is None:
+            return matrix, row_labels, column_labels
+        
+        sorted_matrix = matrix.copy()
+        sorted_row_labels = row_labels.copy() if row_labels is not None else None
+        sorted_column_labels = column_labels.copy() if column_labels is not None else None
+        
+        try:
+            # Apply row sorting
+            if self.sort_rows_var.get() and self.row_sorting_vector_var.get():
+                row_sort_vector = self.load_sorting_vector(self.row_sorting_vector_var.get(), 'row')
+                if row_sort_vector is not None and len(row_sort_vector) == matrix.shape[0]:
+                    # Sort rows
+                    sort_indices = np.argsort(row_sort_vector)
+                    if not self.row_sort_ascending_var.get():
+                        sort_indices = sort_indices[::-1]
+                    
+                    sorted_matrix = sorted_matrix[sort_indices, :]
+                    if sorted_row_labels is not None:
+                        sorted_row_labels = sorted_row_labels.iloc[sort_indices]
+                else:
+                    if row_sort_vector is not None:
+                        messagebox.showerror("Sorting Error", 
+                                           f"Row sorting vector length ({len(row_sort_vector)}) "
+                                           f"does not match matrix rows ({matrix.shape[0]}). Using original order.")
+                    return matrix, row_labels, column_labels
+            
+            # Apply column sorting
+            if self.sort_columns_var.get() and self.column_sorting_vector_var.get():
+                col_sort_vector = self.load_sorting_vector(self.column_sorting_vector_var.get(), 'column')
+                if col_sort_vector is not None and len(col_sort_vector) == matrix.shape[1]:
+                    # Sort columns
+                    sort_indices = np.argsort(col_sort_vector)
+                    if not self.column_sort_ascending_var.get():
+                        sort_indices = sort_indices[::-1]
+                    
+                    sorted_matrix = sorted_matrix[:, sort_indices]
+                    if sorted_column_labels is not None:
+                        sorted_column_labels = sorted_column_labels.iloc[sort_indices]
+                else:
+                    if col_sort_vector is not None:
+                        messagebox.showerror("Sorting Error", 
+                                           f"Column sorting vector length ({len(col_sort_vector)}) "
+                                           f"does not match matrix columns ({matrix.shape[1]}). Using original order.")
+                    return matrix, row_labels, column_labels
+            
+            return sorted_matrix, sorted_row_labels, sorted_column_labels
+            
+        except Exception as e:
+            messagebox.showerror("Sorting Error", f"Error applying sorting: {str(e)}. Using original order.")
+            return matrix, row_labels, column_labels
+    
+    def load_sorting_vector(self, filename, vector_type):
+        """Load a sorting vector from a CSV file."""
+        if not self.selected_dataset or not filename:
+            return None
+        
+        try:
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            file_path = os.path.join(dataset_path, filename)
+            
+            if os.path.exists(file_path):
+                # Load the CSV file
+                vector_data = pd.read_csv(file_path)
+                
+                # If it's a single column, return it as a series
+                if len(vector_data.columns) == 1:
+                    return vector_data.iloc[:, 0]
+                else:
+                    # If multiple columns, use the first column
+                    return vector_data.iloc[:, 0]
+            else:
+                return None
+                
+        except Exception as e:
+            print(f"Error loading sorting vector {filename}: {e}")
+            return None
 
     
     def previous_neuron(self):
@@ -1318,6 +1532,26 @@ class FigureGenerationGUI:
             # Load matrix data
             raster_matrix = np.load(raster_path)
             
+            # Load row and column labels if available
+            row_labels = None
+            column_labels = None
+            
+            if self.raster_row_labels_enabled.get() and 'row_labels' in self.file_selection_widgets:
+                row_labels_file = self.file_selection_widgets['row_labels']['var'].get()
+                if row_labels_file:
+                    row_labels_path = os.path.join(dataset_path, row_labels_file)
+                    row_labels = pd.read_csv(row_labels_path)
+            
+            if self.raster_column_labels_enabled.get() and 'column_labels' in self.file_selection_widgets:
+                column_labels_file = self.file_selection_widgets['column_labels']['var'].get()
+                if column_labels_file:
+                    column_labels_path = os.path.join(dataset_path, column_labels_file)
+                    column_labels = pd.read_csv(column_labels_path)
+            
+            # Apply sorting if enabled
+            raster_matrix, row_labels, column_labels = self.apply_sorting_to_matrix(
+                raster_matrix, row_labels, column_labels)
+            
             # Check if annotation is enabled and available
             show_annotation = (self.raster_annotation_enabled.get() and 
                              'annotation' in self.file_selection_widgets and 
@@ -1395,27 +1629,17 @@ class FigureGenerationGUI:
             self.inspection_ax.set_ylabel(self.raster_row_title.get())
             
             # Handle row labels
-            if self.raster_row_labels_enabled.get() and 'row_labels' in self.file_selection_widgets:
-                row_labels_file = self.file_selection_widgets['row_labels']['var'].get()
-                if row_labels_file:
-                    self.apply_axis_labels(raster_path, row_labels_file, 'row', raster_matrix.shape[0])
-                else:
-                    # Clear row labels if no file selected
-                    self.inspection_ax.set_yticks([])
+            if self.raster_row_labels_enabled.get() and row_labels is not None:
+                self.apply_sorted_axis_labels(row_labels, 'row', raster_matrix.shape[0])
             else:
-                # Clear row labels if checkbox unchecked
+                # Clear row labels if no file selected or checkbox unchecked
                 self.inspection_ax.set_yticks([])
             
             # Handle column labels
-            if self.raster_column_labels_enabled.get() and 'column_labels' in self.file_selection_widgets:
-                column_labels_file = self.file_selection_widgets['column_labels']['var'].get()
-                if column_labels_file:
-                    self.apply_axis_labels(raster_path, column_labels_file, 'column', raster_matrix.shape[1])
-                else:
-                    # Clear column labels if no file selected
-                    self.inspection_ax.set_xticks([])
+            if self.raster_column_labels_enabled.get() and column_labels is not None:
+                self.apply_sorted_axis_labels(column_labels, 'column', raster_matrix.shape[1])
             else:
-                # Clear column labels if checkbox unchecked
+                # Clear column labels if no file selected or checkbox unchecked
                 self.inspection_ax.set_xticks([])
             
             # Remove any existing colorbar
@@ -1891,15 +2115,61 @@ class FigureGenerationGUI:
             else:
                 self.inspection_ax.set_xticks([])
     
-
-    
-
-    
-
-    
-
-    
-
+    def apply_sorted_axis_labels(self, labels_df, axis, axis_length):
+        """Apply labels to the specified axis using pre-sorted labels DataFrame."""
+        try:
+            # Assume first column contains the labels
+            # Format numeric labels by rounding to integers, keep non-numeric as strings
+            raw_labels = labels_df.iloc[:, 0]
+            labels = []
+            for label in raw_labels:
+                try:
+                    # Try to convert to float first
+                    float_val = float(label)
+                    # Round to nearest integer for display
+                    labels.append(str(int(round(float_val))))
+                except (ValueError, TypeError):
+                    # If conversion fails, keep as string (strip whitespace)
+                    labels.append(str(label).strip())
+            
+            # Get the number of labels to show
+            if axis == 'row':
+                try:
+                    num_labels = int(self.raster_row_label_count.get())
+                except ValueError:
+                    num_labels = 6
+            else:
+                try:
+                    num_labels = int(self.raster_column_label_count.get())
+                except ValueError:
+                    num_labels = 6
+            
+            # Calculate equally spaced positions
+            if len(labels) > 0 and num_labels > 0:
+                max_labels = min(num_labels, len(labels))
+                if max_labels == 1:
+                    positions = [len(labels) - 1]
+                    selected_labels = [labels[-1]]
+                else:
+                    step = (len(labels) - 1) / (max_labels - 1)
+                    positions = [int(round(i * step)) for i in range(max_labels)]
+                    selected_labels = [labels[pos] for pos in positions]
+                
+                # Apply to appropriate axis
+                if axis == 'row':
+                    self.inspection_ax.set_yticks(positions)
+                    self.inspection_ax.set_yticklabels(selected_labels)
+                else:
+                    self.inspection_ax.set_xticks(positions)
+                    self.inspection_ax.set_xticklabels(selected_labels, rotation=45)
+            
+        except Exception as e:
+            print(f"Error applying sorted {axis} labels: {e}")
+            # Clear labels on error
+            if axis == 'row':
+                self.inspection_ax.set_yticks([])
+            else:
+                self.inspection_ax.set_xticks([])
     
     def clear_inspection_figure(self):
         """Clear the inspection figure."""
