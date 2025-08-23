@@ -72,7 +72,7 @@ class FigureGenerationGUI:
     def __init__(self):
         self.window = tk.Toplevel()
         self.window.title("Figure Generation")
-        self.window.geometry("1200x1200")  # Increased size for new tab
+        self.window.geometry("1000x800")  # Reduced size for better screen fit
         self.window.configure(bg='#f0f0f0')
         
         # Initialize variables
@@ -100,22 +100,74 @@ class FigureGenerationGUI:
         notebook = ttk.Notebook(self.window)
         notebook.pack(fill="both", expand=True, padx=20, pady=5)
         
-        # Create figure tab
+        # Create figure tab with scrolling
         self.create_figure_tab(notebook)
         
-        # Browse figures tab
+        # Browse figures tab with scrolling
         self.create_browse_tab(notebook)
         
-        # Figure Inspection tab
+        # Figure Inspection tab with scrolling
         self.create_inspection_tab(notebook)
+    
+    def create_scrollable_frame(self, parent):
+        """Create a scrollable frame with canvas and scrollbar."""
+        # Create a frame to hold the canvas and scrollbar
+        container = ttk.Frame(parent)
+        
+        # Create canvas
+        canvas = tk.Canvas(container, bg='#f0f0f0')
+        
+        # Create scrollbar
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        
+        # Create the scrollable frame
+        scrollable_frame = ttk.Frame(canvas)
+        
+        # Configure the canvas
+        def configure_scroll_region(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        
+        scrollable_frame.bind("<Configure>", configure_scroll_region)
+        
+        # Create a window in the canvas for the scrollable frame
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        
+        # Configure the canvas to use the scrollbar
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack the canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Bind mouse wheel scrolling specifically to this canvas
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        # Bind mouse wheel to this specific canvas
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        
+        # Bind mouse wheel to the scrollable frame as well
+        scrollable_frame.bind("<MouseWheel>", _on_mousewheel)
+        
+        # Bind mouse wheel to all child widgets
+        def bind_mousewheel_to_children(widget):
+            widget.bind("<MouseWheel>", _on_mousewheel)
+            for child in widget.winfo_children():
+                bind_mousewheel_to_children(child)
+        
+        # Bind mouse wheel to all existing and future children
+        bind_mousewheel_to_children(scrollable_frame)
+        
+        return scrollable_frame, container
     
     def create_figure_tab(self, parent):
         """Create the figure generation tab."""
-        fig_frame = ttk.Frame(parent)
-        parent.add(fig_frame, text="Create Figure")
+        # Create scrollable frame for the tab
+        scrollable_frame, container = self.create_scrollable_frame(parent)
+        parent.add(container, text="Create Figure")
         
         # Dataset selection frame
-        dataset_frame = ttk.LabelFrame(fig_frame, text="Data Selection", padding=10)
+        dataset_frame = ttk.LabelFrame(scrollable_frame, text="Data Selection", padding=10)
         dataset_frame.pack(fill="x", padx=10, pady=5)
         
         # Dataset selection
@@ -136,7 +188,7 @@ class FigureGenerationGUI:
         self.job_combo.grid(row=1, column=1, padx=5, pady=2)
         
         # Figure options frame
-        options_frame = ttk.LabelFrame(fig_frame, text="Figure Options", padding=10)
+        options_frame = ttk.LabelFrame(scrollable_frame, text="Figure Options", padding=10)
         options_frame.pack(fill="x", padx=10, pady=5)
         
         # Figure type
@@ -170,7 +222,7 @@ class FigureGenerationGUI:
         dpi_entry.grid(row=1, column=3, padx=5, pady=2)
         
         # Plot parameters frame
-        params_frame = ttk.LabelFrame(fig_frame, text="Plot Parameters", padding=10)
+        params_frame = ttk.LabelFrame(scrollable_frame, text="Plot Parameters", padding=10)
         params_frame.pack(fill="both", expand=True, padx=10, pady=5)
         
         # Dynamic parameters based on figure type
@@ -181,7 +233,7 @@ class FigureGenerationGUI:
         self.create_default_plot_params()
         
         # Preview and generation frame
-        action_frame = ttk.Frame(fig_frame)
+        action_frame = ttk.Frame(scrollable_frame)
         action_frame.pack(fill="x", padx=10, pady=10)
         
         ttk.Button(action_frame, text="Preview Figure", 
@@ -193,11 +245,12 @@ class FigureGenerationGUI:
     
     def create_browse_tab(self, parent):
         """Create the figure browsing tab."""
-        browse_frame = ttk.Frame(parent)
-        parent.add(browse_frame, text="Browse Figures")
+        # Create scrollable frame for the tab
+        scrollable_frame, container = self.create_scrollable_frame(parent)
+        parent.add(container, text="Browse Figures")
         
         # Filter frame
-        filter_frame = ttk.LabelFrame(browse_frame, text="Filters", padding=10)
+        filter_frame = ttk.LabelFrame(scrollable_frame, text="Filters", padding=10)
         filter_frame.pack(fill="x", padx=10, pady=5)
         
         # Dataset filter
@@ -226,7 +279,7 @@ class FigureGenerationGUI:
                   command=self.apply_filters).grid(row=0, column=6, padx=5)
         
         # Figures list frame
-        list_frame = ttk.Frame(browse_frame)
+        list_frame = ttk.Frame(scrollable_frame)
         list_frame.pack(fill="both", expand=True, padx=10, pady=5)
         
         # Figures treeview
@@ -256,7 +309,7 @@ class FigureGenerationGUI:
         figures_scrollbar.config(command=self.figures_tree.yview)
         
         # Figure actions frame
-        fig_actions_frame = ttk.Frame(browse_frame)
+        fig_actions_frame = ttk.Frame(scrollable_frame)
         fig_actions_frame.pack(fill="x", padx=10, pady=5)
         
         ttk.Button(fig_actions_frame, text="Open Figure", 
@@ -284,23 +337,24 @@ class FigureGenerationGUI:
             message_label.pack(expand=True)
             return
         
-        inspection_frame = ttk.Frame(parent)
-        parent.add(inspection_frame, text="Figure Inspection")
+        # Create scrollable frame for the tab
+        scrollable_frame, container = self.create_scrollable_frame(parent)
+        parent.add(container, text="Figure Inspection")
         
         # Data Selection Section (Top)
-        self.create_inspection_data_selection(inspection_frame)
+        self.create_inspection_data_selection(scrollable_frame)
         
         # Required Files Section (Between Data Selection and Figure Display)
-        self.create_required_files_section(inspection_frame)
+        self.create_required_files_section(scrollable_frame)
         
         # Figure Display Section (Middle)
-        self.create_inspection_figure_display(inspection_frame)
+        self.create_inspection_figure_display(scrollable_frame)
         
         # Controls Section (Bottom)
-        self.create_inspection_controls(inspection_frame)
+        self.create_inspection_controls(scrollable_frame)
         
         # Action buttons
-        self.create_inspection_actions(inspection_frame)
+        self.create_inspection_actions(scrollable_frame)
     
     def create_inspection_data_selection(self, parent):
         """Create the data selection section for inspection tab."""
