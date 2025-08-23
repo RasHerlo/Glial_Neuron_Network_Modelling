@@ -806,6 +806,24 @@ class FigureGenerationGUI:
             'config': mode_config['required_files'][1]
         }
         
+        # Time Conversion Controls (moved from Figure Controls to reduce window height)
+        time_conv_frame = ttk.LabelFrame(left_frame, text="Time Conversion", padding=5)
+        time_conv_frame.pack(fill="x", pady=5)
+        
+        # Initialize time conversion variables here if not already done
+        if not hasattr(self, 'tuning_convert_to_seconds'):
+            self.tuning_convert_to_seconds = tk.BooleanVar(value=mode_config['controls']['convert_to_seconds_default'])
+        if not hasattr(self, 'tuning_framerate'):
+            self.tuning_framerate = tk.StringVar(value=str(mode_config['controls']['framerate_default']))
+        
+        ttk.Checkbutton(time_conv_frame, text="Convert to Seconds", variable=self.tuning_convert_to_seconds,
+                       command=self.update_inspection_figure).grid(row=0, column=0, sticky="w", padx=5)
+        
+        ttk.Label(time_conv_frame, text="Frame Rate (Hz):").grid(row=0, column=1, sticky="w", padx=5)
+        framerate_entry = ttk.Entry(time_conv_frame, textvariable=self.tuning_framerate, width=10)
+        framerate_entry.grid(row=0, column=2, padx=5, pady=2)
+        framerate_entry.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
         # === RIGHT SIDE: Controls ===
         
         # Time Window Controls
@@ -1039,33 +1057,45 @@ class FigureGenerationGUI:
         # Initialize control variables (only for controls that remain here)
         self.tuning_index_point = tk.StringVar(value=str(mode_config['controls']['index_point_default']))
         self.tuning_index_point_enabled = tk.BooleanVar(value=mode_config['controls']['index_point_enabled_default'])
-        self.tuning_convert_to_seconds = tk.BooleanVar(value=mode_config['controls']['convert_to_seconds_default'])
-        self.tuning_framerate = tk.StringVar(value=str(mode_config['controls']['framerate_default']))
+        # Note: tuning_convert_to_seconds and tuning_framerate are now initialized in the Required Files section
         
-        # Index Point Controls
-        index_frame = ttk.LabelFrame(parent_frame, text="Index Point", padding=5)
-        index_frame.pack(fill="x", pady=5)
+        # Initialize AUC control variables
+        self.tuning_auc_enabled = tk.BooleanVar(value=False)
+        self.tuning_auc_start = tk.StringVar(value="0")
+        self.tuning_auc_end = tk.StringVar(value="20")
         
-        ttk.Checkbutton(index_frame, text="Enable Index Point", variable=self.tuning_index_point_enabled,
-                       command=self.update_inspection_figure).grid(row=0, column=0, sticky="w", padx=5)
+        # Quantifications Controls (renamed from Index Point Controls)
+        quantifications_frame = ttk.LabelFrame(parent_frame, text="Quantifications", padding=5)
+        quantifications_frame.pack(fill="x", pady=5)
         
-        ttk.Label(index_frame, text="Offset from Stimulus:").grid(row=0, column=1, sticky="w", padx=5)
-        index_point_spinbox = ttk.Spinbox(index_frame, textvariable=self.tuning_index_point, 
+        # Index Point row
+        ttk.Label(quantifications_frame, text="Index Point:").grid(row=0, column=0, sticky="w", padx=5)
+        ttk.Checkbutton(quantifications_frame, variable=self.tuning_index_point_enabled,
+                       command=self.update_inspection_figure).grid(row=0, column=1, sticky="w", padx=5)
+        
+        ttk.Label(quantifications_frame, text="Offset from Stimulus:").grid(row=0, column=2, sticky="w", padx=5)
+        index_point_spinbox = ttk.Spinbox(quantifications_frame, textvariable=self.tuning_index_point, 
                                         from_=-1000, to=1000, width=8)
-        index_point_spinbox.grid(row=0, column=2, padx=5, pady=2)
+        index_point_spinbox.grid(row=0, column=3, padx=5, pady=2)
         index_point_spinbox.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
         
-        # Time Conversion Controls
-        time_conv_frame = ttk.LabelFrame(parent_frame, text="Time Conversion", padding=5)
-        time_conv_frame.pack(fill="x", pady=5)
+        # AUC row
+        ttk.Label(quantifications_frame, text="Enable AUC:").grid(row=1, column=0, sticky="w", padx=5)
+        ttk.Checkbutton(quantifications_frame, variable=self.tuning_auc_enabled,
+                       command=self.update_inspection_figure).grid(row=1, column=1, sticky="w", padx=5)
         
-        ttk.Checkbutton(time_conv_frame, text="Convert to Seconds", variable=self.tuning_convert_to_seconds,
-                       command=self.update_inspection_figure).grid(row=0, column=0, sticky="w", padx=5)
+        ttk.Label(quantifications_frame, text="AUC start:").grid(row=1, column=2, sticky="w", padx=5)
+        auc_start_spinbox = ttk.Spinbox(quantifications_frame, textvariable=self.tuning_auc_start, 
+                                      from_=-1000, to=1000, width=8)
+        auc_start_spinbox.grid(row=1, column=3, padx=5, pady=2)
+        auc_start_spinbox.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
         
-        ttk.Label(time_conv_frame, text="Frame Rate (Hz):").grid(row=0, column=1, sticky="w", padx=5)
-        framerate_entry = ttk.Entry(time_conv_frame, textvariable=self.tuning_framerate, width=10)
-        framerate_entry.grid(row=0, column=2, padx=5, pady=2)
-        framerate_entry.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        ttk.Label(quantifications_frame, text="AUC end:").grid(row=2, column=2, sticky="w", padx=5)
+        auc_end_spinbox = ttk.Spinbox(quantifications_frame, textvariable=self.tuning_auc_end, 
+                                    from_=-1000, to=1000, width=8)
+        auc_end_spinbox.grid(row=2, column=3, padx=5, pady=2)
+        auc_end_spinbox.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+
     
     def previous_neuron(self):
         """Navigate to previous neuron."""
@@ -1433,22 +1463,62 @@ class FigureGenerationGUI:
                                  single_neuron_curve - single_neuron_std,
                                  single_neuron_curve + single_neuron_std,
                                  alpha=0.3, color='blue')
-            ax_single.set_ylabel('Relative Activity (normalized to baseline)')
+            ax_single.set_ylabel('Relative Activity\n(normalized to baseline)')
             ax_single.set_title(f'Neuron {current_neuron_idx + 1} Tuning Curve')
             ax_single.grid(True, alpha=0.3)
             
-            # Add index point if enabled
+            # Add AUC area if enabled
+            auc_value = None
+            if self.tuning_auc_enabled.get():
+                try:
+                    auc_start_frame = int(self.tuning_auc_start.get())
+                    auc_end_frame = int(self.tuning_auc_end.get())
+                    
+                    # Convert frame indices to time axis indices
+                    auc_start_idx = auc_start_frame + frames_before
+                    auc_end_idx = auc_end_frame + frames_before
+                    
+                    # Ensure indices are within bounds
+                    if 0 <= auc_start_idx < len(time_axis) and 0 <= auc_end_idx < len(time_axis) and auc_start_idx < auc_end_idx:
+                        # Extract the portion of the curve for AUC calculation
+                        auc_time = time_axis[auc_start_idx:auc_end_idx+1]
+                        auc_curve = single_neuron_curve[auc_start_idx:auc_end_idx+1]
+                        
+                        # Calculate AUC using trapezoidal integration, accounting for baseline (subtract 1.0)
+                        baseline_corrected_curve = auc_curve - 1.0
+                        auc_value = np.trapz(baseline_corrected_curve, auc_time)
+                        
+                        # Show AUC area
+                        ax_single.fill_between(auc_time, 1.0, auc_curve, alpha=0.3, color='orange', label='AUC Area')
+                        
+                except (ValueError, IndexError):
+                    pass
+            
+            # Add index point if enabled (should be on top of AUC)
+            index_value = None
             if self.tuning_index_point_enabled.get():
                 try:
                     index_offset = int(self.tuning_index_point.get())
-                    if self.tuning_convert_to_seconds.get():
-                        index_x = index_offset / framerate
-                    else:
-                        index_x = index_offset
-                    ax_single.axvline(x=index_x, color='red', linestyle='--', alpha=0.7, label='Index Point')
-                    ax_single.legend()
-                except ValueError:
+                    # Convert to time axis index
+                    index_idx = index_offset + frames_before
+                    
+                    if 0 <= index_idx < len(time_axis):
+                        if self.tuning_convert_to_seconds.get():
+                            index_x = index_offset / framerate
+                        else:
+                            index_x = index_offset
+                        
+                        # Get the index value from the curve
+                        index_value = single_neuron_curve[index_idx]
+                        
+                        ax_single.axvline(x=index_x, color='red', linestyle='--', alpha=0.7, label='Index Point')
+                        
+                except (ValueError, IndexError):
                     pass
+            
+            # Add legend if any quantifications are enabled
+            if self.tuning_index_point_enabled.get() or self.tuning_auc_enabled.get():
+                ax_single.legend()
             
             # Lower subplot: Population average
             ax_pop = self.inspection_fig.add_subplot(gs[1])
@@ -1458,28 +1528,96 @@ class FigureGenerationGUI:
                                population_curve + population_std,
                                alpha=0.3, color='green')
             ax_pop.set_xlabel(f'Time relative to stimulus ({time_unit})')
-            ax_pop.set_ylabel('Relative Activity (normalized to baseline)')
+            ax_pop.set_ylabel('Relative Activity\n(normalized to baseline)')
             ax_pop.set_title('Population Average Tuning Curve')
             ax_pop.grid(True, alpha=0.3)
             
-            # Add index point if enabled
+            # Add AUC area if enabled (for population plot)
+            pop_auc_value = None
+            if self.tuning_auc_enabled.get():
+                try:
+                    auc_start_frame = int(self.tuning_auc_start.get())
+                    auc_end_frame = int(self.tuning_auc_end.get())
+                    
+                    # Convert frame indices to time axis indices
+                    auc_start_idx = auc_start_frame + frames_before
+                    auc_end_idx = auc_end_frame + frames_before
+                    
+                    # Ensure indices are within bounds
+                    if 0 <= auc_start_idx < len(time_axis) and 0 <= auc_end_idx < len(time_axis) and auc_start_idx < auc_end_idx:
+                        # Extract the portion of the curve for AUC calculation
+                        auc_time = time_axis[auc_start_idx:auc_end_idx+1]
+                        auc_curve = population_curve[auc_start_idx:auc_end_idx+1]
+                        
+                        # Calculate AUC using trapezoidal integration, accounting for baseline (subtract 1.0)
+                        baseline_corrected_curve = auc_curve - 1.0
+                        pop_auc_value = np.trapz(baseline_corrected_curve, auc_time)
+                        
+                        # Show AUC area
+                        ax_pop.fill_between(auc_time, 1.0, auc_curve, alpha=0.3, color='orange', label='AUC Area')
+                        
+                except (ValueError, IndexError):
+                    pass
+            
+            # Add index point if enabled (for population plot)
+            pop_index_value = None
             if self.tuning_index_point_enabled.get():
                 try:
                     index_offset = int(self.tuning_index_point.get())
-                    if self.tuning_convert_to_seconds.get():
-                        index_x = index_offset / framerate
-                    else:
-                        index_x = index_offset
-                    ax_pop.axvline(x=index_x, color='red', linestyle='--', alpha=0.7, label='Index Point')
-                    ax_pop.legend()
-                except ValueError:
+                    # Convert to time axis index
+                    index_idx = index_offset + frames_before
+                    
+                    if 0 <= index_idx < len(time_axis):
+                        if self.tuning_convert_to_seconds.get():
+                            index_x = index_offset / framerate
+                        else:
+                            index_x = index_offset
+                        
+                        # Get the index value from the population curve
+                        pop_index_value = population_curve[index_idx]
+                        
+                        ax_pop.axvline(x=index_x, color='red', linestyle='--', alpha=0.7, label='Index Point')
+                        
+                except (ValueError, IndexError):
                     pass
+            
+            # Add legend if any quantifications are enabled (positioned in lower left to avoid covering values)
+            if self.tuning_index_point_enabled.get() or self.tuning_auc_enabled.get():
+                ax_pop.legend(loc='lower left')
             
             # Add stimulus start marker (always at 0) and baseline reference
             ax_single.axvline(x=0, color='black', linestyle='-', alpha=0.5, linewidth=1)
             ax_single.axhline(y=1.0, color='gray', linestyle=':', alpha=0.7, linewidth=1)
             ax_pop.axvline(x=0, color='black', linestyle='-', alpha=0.5, linewidth=1)
             ax_pop.axhline(y=1.0, color='gray', linestyle=':', alpha=0.7, linewidth=1)
+            
+            # Add text annotations for quantification values
+            annotation_lines = []
+            
+            # Single neuron annotations
+            if index_value is not None:
+                annotation_lines.append(f"Index Value: {index_value:.3f}")
+            if auc_value is not None:
+                annotation_lines.append(f"AUC Value: {auc_value:.3f}")
+            
+            if annotation_lines:
+                annotation_text = "\n".join(annotation_lines)
+                ax_single.text(0.02, 0.98, annotation_text, transform=ax_single.transAxes, 
+                             fontsize=10, verticalalignment='top', bbox=dict(boxstyle="round,pad=0.3", 
+                             facecolor="white", alpha=0.8))
+            
+            # Population annotations
+            pop_annotation_lines = []
+            if pop_index_value is not None:
+                pop_annotation_lines.append(f"Pop Index Value: {pop_index_value:.3f}")
+            if pop_auc_value is not None:
+                pop_annotation_lines.append(f"Pop AUC Value: {pop_auc_value:.3f}")
+            
+            if pop_annotation_lines:
+                pop_annotation_text = "\n".join(pop_annotation_lines)
+                ax_pop.text(0.02, 0.98, pop_annotation_text, transform=ax_pop.transAxes, 
+                           fontsize=10, verticalalignment='top', bbox=dict(boxstyle="round,pad=0.3", 
+                           facecolor="white", alpha=0.8))
             
             # Update the main inspection_ax reference for consistency
             self.inspection_ax = ax_pop
