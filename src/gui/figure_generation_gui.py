@@ -1079,6 +1079,10 @@ class FigureGenerationGUI:
         index_point_spinbox.grid(row=0, column=3, padx=5, pady=2)
         index_point_spinbox.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
         
+        # Save AUC button (positioned on the right side)
+        ttk.Button(quantifications_frame, text="Save AUC", 
+                  command=self.save_auc_values).grid(row=0, column=4, padx=10, pady=2, rowspan=3, sticky="ns")
+        
         # AUC row
         ttk.Label(quantifications_frame, text="Enable AUC:").grid(row=1, column=0, sticky="w", padx=5)
         ttk.Checkbutton(quantifications_frame, variable=self.tuning_auc_enabled,
@@ -2224,6 +2228,144 @@ class FigureGenerationGUI:
     def export_figure(self):
         """Export figure to different location/format."""
         messagebox.showinfo("Coming Soon", "Figure export will be implemented soon!")
+    
+    def save_auc_values(self):
+        """Save AUC values for all neurons to a CSV file."""
+        # Validate prerequisites
+        if not self.selected_dataset:
+            messagebox.showwarning("No Dataset", "Please select a dataset first.")
+            return
+        
+        if self.inspection_mode_var.get() != "TuningCurve":
+            messagebox.showwarning("Wrong Mode", "AUC saving is only available in TuningCurve mode.")
+            return
+        
+        # Check if required files are selected
+        if ('raster_matrix' not in self.file_selection_widgets or 
+            not self.file_selection_widgets['raster_matrix']['var'].get() or
+            'annotation' not in self.file_selection_widgets or
+            not self.file_selection_widgets['annotation']['var'].get()):
+            messagebox.showwarning("Missing Files", "Please select both Raster matrix and Annotation files.")
+            return
+        
+        try:
+            # Get current AUC settings
+            auc_start_frame = int(self.tuning_auc_start.get())
+            auc_end_frame = int(self.tuning_auc_end.get())
+            
+            if auc_start_frame >= auc_end_frame:
+                messagebox.showwarning("Invalid Range", "AUC start must be less than AUC end.")
+                return
+            
+            # Load raster matrix
+            raster_file = self.file_selection_widgets['raster_matrix']['var'].get()
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            raster_path = os.path.join(dataset_path, raster_file)
+            raster_matrix = np.load(raster_path)
+            
+            # Load annotation data
+            annotation_file = self.file_selection_widgets['annotation']['var'].get()
+            annotation_path = os.path.join(dataset_path, annotation_file)
+            annotation_df = pd.read_csv(annotation_path)
+            annotation_data = annotation_df.iloc[:, 0].values
+            
+            # Get time window parameters
+            frames_before = int(self.tuning_frames_before.get())
+            frames_after = int(self.tuning_frames_after.get())
+            
+            # Detect stimulus starts
+            stimulus_starts = self.detect_stimulus_starts(annotation_data)
+            
+            if len(stimulus_starts) == 0:
+                messagebox.showerror("No Stimuli", "No stimulus events detected in annotation file.")
+                return
+            
+            # Extract stimulus windows
+            stimulus_windows = self.extract_stimulus_windows(raster_matrix, stimulus_starts, frames_before, frames_after)
+            
+            if len(stimulus_windows) == 0:
+                messagebox.showerror("No Valid Windows", "No valid stimulus windows found.")
+                return
+            
+            # Calculate AUC for all neurons
+            n_neurons = raster_matrix.shape[0]
+            auc_values = []
+            failed_neurons = []
+            
+            for neuron_idx in range(n_neurons):
+                try:
+                    # Calculate tuning curve for this neuron
+                    mean_trace, _ = self.calculate_single_neuron_tuning_curve(stimulus_windows, neuron_idx)
+                    
+                    # Convert frame indices to time axis indices
+                    auc_start_idx = auc_start_frame + frames_before
+                    auc_end_idx = auc_end_frame + frames_before
+                    
+                    # Ensure indices are within bounds
+                    if (0 <= auc_start_idx < len(mean_trace) and 
+                        0 <= auc_end_idx < len(mean_trace) and 
+                        auc_start_idx < auc_end_idx):
+                        
+                        # Create time axis for AUC calculation
+                        total_frames = frames_before + frames_after + 1
+                        time_axis = np.arange(-frames_before, frames_after + 1)
+                        
+                        # Convert to seconds if needed
+                        if hasattr(self, 'tuning_convert_to_seconds') and self.tuning_convert_to_seconds.get():
+                            try:
+                                framerate = float(self.tuning_framerate.get())
+                                time_axis = time_axis / framerate
+                            except ValueError:
+                                pass  # Use frames if framerate is invalid
+                        
+                        # Extract the portion for AUC calculation
+                        auc_time = time_axis[auc_start_idx:auc_end_idx+1]
+                        auc_curve = mean_trace[auc_start_idx:auc_end_idx+1]
+                        
+                        # Calculate AUC with baseline correction (subtract 1.0)
+                        baseline_corrected_curve = auc_curve - 1.0
+                        auc_value = np.trapz(baseline_corrected_curve, auc_time)
+                        auc_values.append(auc_value)
+                    else:
+                        # AUC range is out of bounds
+                        auc_values.append(np.nan)
+                        failed_neurons.append(neuron_idx + 1)
+                        
+                except Exception as e:
+                    # AUC calculation failed for this neuron
+                    auc_values.append(np.nan)
+                    failed_neurons.append(neuron_idx + 1)
+                    print(f"AUC calculation failed for neuron {neuron_idx + 1}: {e}")
+            
+            # Create DataFrame
+            auc_df = pd.DataFrame({'AUC': auc_values})
+            
+            # Create output path
+            matrices_dir = os.path.join(dataset_path, "processed", "matrices")
+            os.makedirs(matrices_dir, exist_ok=True)
+            
+            filename = f"Tuning_AUC_{auc_start_frame}_{auc_end_frame}.csv"
+            output_path = os.path.join(matrices_dir, filename)
+            
+            # Save to CSV
+            auc_df.to_csv(output_path, index=False)
+            
+            # Show success message
+            success_msg = f"AUC values saved successfully!\nLocation: {output_path}\nNeurons processed: {n_neurons}"
+            
+            # Add warning if some neurons failed
+            if failed_neurons:
+                if len(failed_neurons) <= 10:
+                    failed_list = ", ".join(map(str, failed_neurons))
+                    success_msg += f"\n\nWarning: AUC calculation failed for neurons: {failed_list}\nThese values were saved as NaN."
+                else:
+                    success_msg += f"\n\nWarning: AUC calculation failed for {len(failed_neurons)} neurons.\nThese values were saved as NaN."
+            
+            messagebox.showinfo("Success", success_msg)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save AUC values: {str(e)}")
+            print(f"AUC save error: {e}")
 
 
 if __name__ == "__main__":
