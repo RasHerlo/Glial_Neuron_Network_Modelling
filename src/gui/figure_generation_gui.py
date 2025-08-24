@@ -1125,8 +1125,8 @@ class FigureGenerationGUI:
     
     def on_required_file_change(self, event=None):
         """Handle changes in required file selections."""
-        # Update sorting vectors when label files change (for RasterPlot mode)
-        if hasattr(self, 'current_mode') and self.current_mode == "RasterPlot":
+        # Update sorting vectors when label files change (for RasterPlot and MatrixVisualization modes)
+        if hasattr(self, 'selected_mode') and (self.selected_mode == "RasterPlot" or self.selected_mode == "MatrixVisualization"):
             self.update_sorting_vectors_from_labels()
         
         # Check if all required files are selected
@@ -1192,6 +1192,9 @@ class FigureGenerationGUI:
         mode = self.inspection_mode_var.get()
         if not mode:
             return
+        
+        # Store the selected mode for use in other methods
+        self.selected_mode = mode
         
         # Show/hide sorting section based on mode
         self.toggle_sorting_section(mode)
@@ -1359,20 +1362,25 @@ class FigureGenerationGUI:
                         except Exception as e:
                             print(f"Error reading row labels file {row_label_files[0]}: {e}")
             
-            # Auto-detect column labels files and get sorting options  
-            column_sorting_options = []
-            if hasattr(self, 'available_files'):
-                column_label_files = self.filter_files_by_type([".csv"], "*column_labels*")
-                if column_label_files:
-                    # Use the first available column labels file
-                    column_labels_path = os.path.join(dataset_path, column_label_files[0])
-                    if os.path.exists(column_labels_path):
-                        try:
-                            column_labels_df = pd.read_csv(column_labels_path)
-                            # Get all columns except 'column_labels'
-                            column_sorting_options = [col for col in column_labels_df.columns if col != 'column_labels']
-                        except Exception as e:
-                            print(f"Error reading column labels file {column_label_files[0]}: {e}")
+            # For MatrixVisualization mode, use row sorting vectors for both row and column sorting
+            # since Ruzicka matrices are square matrices where both dimensions represent the same neurons
+            if hasattr(self, 'selected_mode') and self.selected_mode == "MatrixVisualization":
+                column_sorting_options = row_sorting_options
+            else:
+                # Auto-detect column labels files and get sorting options  
+                column_sorting_options = []
+                if hasattr(self, 'available_files'):
+                    column_label_files = self.filter_files_by_type([".csv"], "*column_labels*")
+                    if column_label_files:
+                        # Use the first available column labels file
+                        column_labels_path = os.path.join(dataset_path, column_label_files[0])
+                        if os.path.exists(column_labels_path):
+                            try:
+                                column_labels_df = pd.read_csv(column_labels_path)
+                                # Get all columns except 'column_labels'
+                                column_sorting_options = [col for col in column_labels_df.columns if col != 'column_labels']
+                            except Exception as e:
+                                print(f"Error reading column labels file {column_label_files[0]}: {e}")
             
             # Update dropdowns
             self.row_sorting_vector_combo['values'] = row_sorting_options
@@ -1424,7 +1432,7 @@ class FigureGenerationGUI:
                         messagebox.showerror("Sorting Error", 
                                            f"Row sorting vector length ({len(row_sort_vector)}) "
                                            f"does not match matrix rows ({matrix.shape[0]}). Using original order.")
-                    return matrix, row_labels, column_labels
+                    # Don't return here - continue with column sorting if enabled
             
             # Apply column sorting
             if self.sort_columns_var.get() and self.column_sorting_vector_var.get():
@@ -1443,7 +1451,7 @@ class FigureGenerationGUI:
                         messagebox.showerror("Sorting Error", 
                                            f"Column sorting vector length ({len(col_sort_vector)}) "
                                            f"does not match matrix columns ({matrix.shape[1]}). Using original order.")
-                    return matrix, row_labels, column_labels
+                    # Don't return here - keep any successful row sorting
             
             return sorted_matrix, sorted_row_labels, sorted_column_labels
             
@@ -1470,13 +1478,25 @@ class FigureGenerationGUI:
                     raise ValueError("Available files not loaded")
                     
             elif vector_type == 'column':
-                if hasattr(self, 'available_files'):
-                    column_label_files = self.filter_files_by_type([".csv"], "*column_labels*")
-                    if not column_label_files:
-                        raise ValueError("No column labels files found")
-                    labels_file = column_label_files[0]  # Use the first available file
+                # For MatrixVisualization mode, use row labels for column sorting
+                # since Ruzicka matrices are square matrices where both dimensions represent the same neurons
+                if hasattr(self, 'selected_mode') and self.selected_mode == "MatrixVisualization":
+                    if hasattr(self, 'available_files'):
+                        row_label_files = self.filter_files_by_type([".csv"], "*row_labels*")
+                        if not row_label_files:
+                            raise ValueError("No row labels files found")
+                        labels_file = row_label_files[0]  # Use row labels file for column sorting
+                    else:
+                        raise ValueError("Available files not loaded")
                 else:
-                    raise ValueError("Available files not loaded")
+                    # For other modes, use column labels files
+                    if hasattr(self, 'available_files'):
+                        column_label_files = self.filter_files_by_type([".csv"], "*column_labels*")
+                        if not column_label_files:
+                            raise ValueError("No column labels files found")
+                        labels_file = column_label_files[0]  # Use the first available file
+                    else:
+                        raise ValueError("Available files not loaded")
             else:
                 raise ValueError(f"Invalid vector_type: {vector_type}. Must be 'row' or 'column'")
             
