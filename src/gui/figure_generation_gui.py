@@ -38,8 +38,8 @@ class FigureGenerationGUI:
             "file_types": [".npy", ".csv"],
             "required_files": [
                 {"name": "raster_matrix", "label": "Raster", "description": "Raster matrix file (.npy)", "pattern": "Raster_matrix*", "extension": ".npy"},
-                {"name": "row_labels", "label": "Row Labels", "description": "Row labels file (.csv)", "pattern": "*row_labels", "extension": ".csv", "optional": True},
-                {"name": "column_labels", "label": "Column Labels", "description": "Column labels file (.csv)", "pattern": "*column_labels", "extension": ".csv", "optional": True},
+                {"name": "row_labels", "label": "Row Labels", "description": "Row labels file (.csv)", "pattern": "*row_labels*", "extension": ".csv", "optional": True},
+                {"name": "column_labels", "label": "Column Labels", "description": "Column labels file (.csv)", "pattern": "*column_labels*", "extension": ".csv", "optional": True},
                 {"name": "annotation", "label": "Annotation", "description": "Binary vector file for annotations (.csv)", "pattern": "*", "extension": ".csv", "optional": True}
             ],
             "controls": {
@@ -432,6 +432,7 @@ class FigureGenerationGUI:
                                                     textvariable=self.row_sorting_vector_var,
                                                     state="readonly", width=20)
         self.row_sorting_vector_combo.pack(side="left", padx=(0, 5))
+        self.row_sorting_vector_combo.bind('<<ComboboxSelected>>', lambda e: self.on_sorting_changed())
         
         # Row sorting direction
         self.row_sort_ascending_var = tk.BooleanVar(value=True)
@@ -456,6 +457,7 @@ class FigureGenerationGUI:
                                                        textvariable=self.column_sorting_vector_var,
                                                        state="readonly", width=20)
         self.column_sorting_vector_combo.pack(side="left", padx=(0, 5))
+        self.column_sorting_vector_combo.bind('<<ComboboxSelected>>', lambda e: self.on_sorting_changed())
         
         # Column sorting direction
         self.column_sort_ascending_var = tk.BooleanVar(value=True)
@@ -578,9 +580,9 @@ class FigureGenerationGUI:
             # Clear figure
             self.clear_inspection_figure()
             
-            # Update sorting vectors if sorting section is visible
+            # Update sorting vectors if sorting section is visible (for RasterPlot mode)
             if hasattr(self, 'sorting_frame') and self.sorting_frame.winfo_ismapped():
-                self.populate_sorting_vectors()
+                self.update_sorting_vectors_from_labels()
     
     def load_dataset_files(self):
         """Load available files for the selected dataset."""
@@ -757,9 +759,9 @@ class FigureGenerationGUI:
         row_labels_combo = ttk.Combobox(row_labels_frame, textvariable=row_labels_var, state="readonly", width=30)
         row_labels_combo.grid(row=0, column=1, padx=5, pady=2)
         
-        # Filter for *row_labels .csv files
+        # Filter for *row_labels* .csv files
         if hasattr(self, 'available_files'):
-            row_label_files = self.filter_files_by_type([".csv"], "*row_labels")
+            row_label_files = self.filter_files_by_type([".csv"], "*row_labels*")
             row_labels_combo['values'] = row_label_files
         
         row_labels_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
@@ -799,9 +801,9 @@ class FigureGenerationGUI:
         column_labels_combo = ttk.Combobox(column_labels_frame, textvariable=column_labels_var, state="readonly", width=30)
         column_labels_combo.grid(row=0, column=1, padx=5, pady=2)
         
-        # Filter for *column_labels .csv files
+        # Filter for *column_labels* .csv files
         if hasattr(self, 'available_files'):
-            column_label_files = self.filter_files_by_type([".csv"], "*column_labels")
+            column_label_files = self.filter_files_by_type([".csv"], "*column_labels*")
             column_labels_combo['values'] = column_label_files
         
         column_labels_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
@@ -1080,6 +1082,10 @@ class FigureGenerationGUI:
     
     def on_required_file_change(self, event=None):
         """Handle changes in required file selections."""
+        # Update sorting vectors when label files change (for RasterPlot mode)
+        if hasattr(self, 'current_mode') and self.current_mode == "RasterPlot":
+            self.update_sorting_vectors_from_labels()
+        
         # Check if all required files are selected
         if self.validate_required_files():
             # Load data and update figure
@@ -1259,29 +1265,65 @@ class FigureGenerationGUI:
     
     def populate_sorting_vectors(self):
         """Populate the sorting vector dropdowns with available files."""
+        # This method is now replaced by update_sorting_vectors_from_labels
+        # but kept for compatibility with older code paths
+        self.update_sorting_vectors_from_labels()
+    
+    def update_sorting_vectors_from_labels(self):
+        """Update sorting vector dropdowns based on available label files."""
         if not self.selected_dataset:
             return
         
         try:
-            # Get available files from the dataset
             dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
-            available_files = []
             
-            if os.path.exists(dataset_path):
-                for file in os.listdir(dataset_path):
-                    if file.endswith('.csv'):
-                        available_files.append(file)
+            # Auto-detect row labels files and get sorting options
+            row_sorting_options = []
+            if hasattr(self, 'available_files'):
+                row_label_files = self.filter_files_by_type([".csv"], "*row_labels*")
+                if row_label_files:
+                    # Use the first available row labels file
+                    row_labels_path = os.path.join(dataset_path, row_label_files[0])
+                    if os.path.exists(row_labels_path):
+                        try:
+                            row_labels_df = pd.read_csv(row_labels_path)
+                            # Get all columns except 'row_labels'
+                            row_sorting_options = [col for col in row_labels_df.columns if col != 'row_labels']
+                        except Exception as e:
+                            print(f"Error reading row labels file {row_label_files[0]}: {e}")
+            
+            # Auto-detect column labels files and get sorting options  
+            column_sorting_options = []
+            if hasattr(self, 'available_files'):
+                column_label_files = self.filter_files_by_type([".csv"], "*column_labels*")
+                if column_label_files:
+                    # Use the first available column labels file
+                    column_labels_path = os.path.join(dataset_path, column_label_files[0])
+                    if os.path.exists(column_labels_path):
+                        try:
+                            column_labels_df = pd.read_csv(column_labels_path)
+                            # Get all columns except 'column_labels'
+                            column_sorting_options = [col for col in column_labels_df.columns if col != 'column_labels']
+                        except Exception as e:
+                            print(f"Error reading column labels file {column_label_files[0]}: {e}")
             
             # Update dropdowns
-            self.row_sorting_vector_combo['values'] = available_files
-            self.column_sorting_vector_combo['values'] = available_files
+            self.row_sorting_vector_combo['values'] = row_sorting_options
+            self.column_sorting_vector_combo['values'] = column_sorting_options
             
-            # Clear current selections
-            self.row_sorting_vector_var.set('')
-            self.column_sorting_vector_var.set('')
+            # Clear current selections if they're no longer valid
+            if self.row_sorting_vector_var.get() not in row_sorting_options:
+                self.row_sorting_vector_var.set('')
+            if self.column_sorting_vector_var.get() not in column_sorting_options:
+                self.column_sorting_vector_var.set('')
             
         except Exception as e:
-            print(f"Error populating sorting vectors: {e}")
+            print(f"Error updating sorting vectors from labels: {e}")
+            # Clear dropdowns on error
+            self.row_sorting_vector_combo['values'] = []
+            self.column_sorting_vector_combo['values'] = []
+            self.row_sorting_vector_var.set('')
+            self.column_sorting_vector_var.set('')
     
     def on_sorting_changed(self):
         """Handle changes in sorting controls."""
@@ -1342,30 +1384,53 @@ class FigureGenerationGUI:
             messagebox.showerror("Sorting Error", f"Error applying sorting: {str(e)}. Using original order.")
             return matrix, row_labels, column_labels
     
-    def load_sorting_vector(self, filename, vector_type):
-        """Load a sorting vector from a CSV file."""
-        if not self.selected_dataset or not filename:
+    def load_sorting_vector(self, column_name, vector_type):
+        """Load a sorting vector from the appropriate label file."""
+        if not self.selected_dataset or not column_name:
             return None
         
         try:
             dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
-            file_path = os.path.join(dataset_path, filename)
             
-            if os.path.exists(file_path):
-                # Load the CSV file
-                vector_data = pd.read_csv(file_path)
-                
-                # If it's a single column, return it as a series
-                if len(vector_data.columns) == 1:
-                    return vector_data.iloc[:, 0]
+            # Auto-detect the appropriate label file based on vector_type
+            if vector_type == 'row':
+                if hasattr(self, 'available_files'):
+                    row_label_files = self.filter_files_by_type([".csv"], "*row_labels*")
+                    if not row_label_files:
+                        raise ValueError("No row labels files found")
+                    labels_file = row_label_files[0]  # Use the first available file
                 else:
-                    # If multiple columns, use the first column
-                    return vector_data.iloc[:, 0]
+                    raise ValueError("Available files not loaded")
+                    
+            elif vector_type == 'column':
+                if hasattr(self, 'available_files'):
+                    column_label_files = self.filter_files_by_type([".csv"], "*column_labels*")
+                    if not column_label_files:
+                        raise ValueError("No column labels files found")
+                    labels_file = column_label_files[0]  # Use the first available file
+                else:
+                    raise ValueError("Available files not loaded")
             else:
-                return None
+                raise ValueError(f"Invalid vector_type: {vector_type}. Must be 'row' or 'column'")
+            
+            # Load the appropriate label file
+            file_path = os.path.join(dataset_path, labels_file)
+            
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"Labels file not found: {file_path}")
+            
+            # Load the CSV file
+            vector_data = pd.read_csv(file_path)
+            
+            # Check if the requested column exists
+            if column_name not in vector_data.columns:
+                raise ValueError(f"Column '{column_name}' not found in {labels_file}. Available columns: {list(vector_data.columns)}")
+            
+            # Return the requested column
+            return vector_data[column_name]
                 
         except Exception as e:
-            print(f"Error loading sorting vector {filename}: {e}")
+            print(f"Error loading sorting vector '{column_name}' for {vector_type}: {e}")
             return None
 
     
