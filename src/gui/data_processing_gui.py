@@ -3,11 +3,12 @@ Data Processing GUI - Interface for processing datasets.
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import sys
 import os
 import threading
 import time
+import pandas as pd
 
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -85,8 +86,6 @@ class DataProcessingGUI:
         if "Matrix Extraction" in available_processors:
             self.processing_type_var.set("Matrix Extraction")
         
-
-        
         # Parameters frame
         params_frame = ttk.LabelFrame(processing_frame, text="Parameters", padding=5)
         params_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
@@ -131,8 +130,9 @@ class DataProcessingGUI:
         action_frame = ttk.Frame(self.window)
         action_frame.pack(fill="x", padx=20, pady=10)
         
-        ttk.Button(action_frame, text="Preview Matrix", 
-                  command=self.preview_matrix).pack(side="left", padx=5)
+        self.preview_button = ttk.Button(action_frame, text="Preview Matrix", 
+                  command=self.preview_matrix)
+        self.preview_button.pack(side="left", padx=5)
         ttk.Button(action_frame, text="Start Processing", 
                   command=self.start_processing).pack(side="left", padx=5)
         ttk.Button(action_frame, text="Refresh Jobs", 
@@ -452,29 +452,185 @@ class DataProcessingGUI:
             widget.destroy()
         self.param_vars.clear()
         
-        # Indexing parameters
-        params = [
-            ("indexing_type", "Indexing Type:", "Row Indexing", "combo", ["Row Indexing", "Column Indexing"]),
-            ("matrix_name", "Matrix Name:", "Raster", "str")
-        ]
+        # Create main container with two columns
+        main_frame = ttk.Frame(self.params_frame)
+        main_frame.pack(fill="both", expand=True)
         
-        for i, (key, label, default, param_type, *args) in enumerate(params):
-            ttk.Label(self.params_frame, text=label).grid(row=i, column=0, sticky="w", padx=5)
+        # Left side - Main parameters
+        left_frame = ttk.Frame(main_frame)
+        left_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        
+        # Right side - Column Name
+        right_frame = ttk.Frame(main_frame)
+        right_frame.pack(side="right", fill="both", expand=True, padx=(10, 0))
+        
+        # Left side parameters
+        # Indexing Type
+        ttk.Label(left_frame, text="Indexing Type:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['indexing_type'] = tk.StringVar(value='Row Indexing')
+        indexing_combo = ttk.Combobox(left_frame, textvariable=self.param_vars['indexing_type'],
+                                    values=['Row Indexing', 'Column Indexing'], 
+                                    state="readonly", width=18)
+        indexing_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # File Selection
+        ttk.Label(left_frame, text="Select CSV File:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        file_frame = ttk.Frame(left_frame)
+        file_frame.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+        
+        self.param_vars['selected_file'] = tk.StringVar()
+        self.file_entry = ttk.Entry(file_frame, textvariable=self.param_vars['selected_file'], 
+                                   width=25, state="readonly")
+        self.file_entry.pack(side="left", fill="x", expand=True)
+        
+        ttk.Button(file_frame, text="Browse...", 
+                  command=self.browse_csv_file, width=8).pack(side="right", padx=(2, 0))
+        
+        # Vector Selection
+        ttk.Label(left_frame, text="Choose Vector:").grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['vector_column'] = tk.StringVar()
+        self.vector_combo = ttk.Combobox(left_frame, textvariable=self.param_vars['vector_column'],
+                                       values=[], state="readonly", width=18)
+        self.vector_combo.grid(row=2, column=1, padx=5, pady=2)
+        self.vector_combo.bind('<<ComboboxSelected>>', self.on_vector_selection_change)
+        
+        # Right side - Column Name
+        ttk.Label(right_frame, text="Column Name:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['column_name'] = tk.StringVar()
+        ttk.Entry(right_frame, textvariable=self.param_vars['column_name'], 
+                 width=20).grid(row=0, column=1, padx=5, pady=2)
+        
+        # Initialize file browser with dataset path if available
+        self.update_default_browse_path()
+    
+    def update_default_browse_path(self):
+        """Update the default browse path based on selected dataset."""
+        if hasattr(self, 'selected_dataset') and self.selected_dataset:
+            self.default_browse_path = os.path.join("data", "datasets", 
+                                                  self.selected_dataset.name, "processed")
+        else:
+            self.default_browse_path = os.path.join("data", "datasets")
+    
+    def browse_csv_file(self):
+        """Open file browser to select CSV file."""
+        # Ensure we have a valid browse path
+        if not hasattr(self, 'default_browse_path'):
+            self.update_default_browse_path()
+        
+        # Make sure the path exists
+        if not os.path.exists(self.default_browse_path):
+            self.default_browse_path = os.path.join("data", "datasets")
+        
+        file_path = filedialog.askopenfilename(
+            title="Select CSV File",
+            initialdir=self.default_browse_path,
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        
+        if file_path:
+            # Convert to relative path if possible
+            try:
+                rel_path = os.path.relpath(file_path)
+                self.param_vars['selected_file'].set(rel_path)
+            except ValueError:
+                # If relative path conversion fails, use absolute path
+                self.param_vars['selected_file'].set(file_path)
             
-            if param_type == "bool":
-                self.param_vars[key] = tk.BooleanVar(value=default)
-                ttk.Checkbutton(self.params_frame, variable=self.param_vars[key]).grid(
-                    row=i, column=1, sticky="w", padx=5)
-            elif param_type == "combo":
-                self.param_vars[key] = tk.StringVar(value=default)
-                combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars[key],
-                                   values=args[0] if args else [default],
-                                   state="readonly", width=18)
-                combo.grid(row=i, column=1, padx=5)
-            else:
-                self.param_vars[key] = tk.StringVar(value=str(default))
-                ttk.Entry(self.params_frame, textvariable=self.param_vars[key], 
-                         width=20).grid(row=i, column=1, padx=5)
+            # Update vector dropdown with columns from selected file
+            self.update_vector_dropdown(file_path)
+    
+    def update_vector_dropdown(self, file_path):
+        """Update vector dropdown with columns from selected CSV file."""
+        try:
+            # Read the CSV file to get column names
+            df = pd.read_csv(file_path)
+            
+            # Filter for numerical columns only
+            numerical_columns = []
+            for col in df.columns:
+                try:
+                    # Try to convert column to numeric
+                    pd.to_numeric(df[col], errors='raise')
+                    numerical_columns.append(col)
+                except (ValueError, TypeError):
+                    # Skip non-numerical columns
+                    continue
+            
+            # Update the dropdown
+            self.vector_combo['values'] = numerical_columns
+            
+            # Clear current selection
+            self.param_vars['vector_column'].set('')
+            self.param_vars['column_name'].set('')
+            
+            if len(numerical_columns) == 1:
+                # Auto-select if only one numerical column
+                self.param_vars['vector_column'].set(numerical_columns[0])
+                self.on_vector_selection_change()
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to read CSV file: {str(e)}")
+            self.vector_combo['values'] = []
+            self.param_vars['vector_column'].set('')
+            self.param_vars['column_name'].set('')
+    
+    def on_vector_selection_change(self, event=None):
+        """Handle vector selection change - update column name."""
+        selected_vector = self.param_vars['vector_column'].get()
+        if selected_vector:
+            # Auto-populate column name with selected vector name + "_index"
+            suggested_name = f"{selected_vector}_index"
+            self.param_vars['column_name'].set(suggested_name)
+    
+    def check_indexing_column_collision(self, indexing_type, column_name):
+        """Check if column name already exists in target file and handle collision."""
+        if not self.selected_dataset:
+            return True
+        
+        # Determine target file path
+        if indexing_type == 'Row Indexing':
+            target_file = f"Raster_row_labels_and_indices.csv"
+        else:  # Column Indexing
+            target_file = f"Raster_column_labels_and_indices.csv"
+        
+        target_path = os.path.join("data", "datasets", self.selected_dataset.name, 
+                                 "processed", "matrices", target_file)
+        
+        # Check if target file exists and if column already exists
+        if os.path.exists(target_path):
+            try:
+                target_df = pd.read_csv(target_path)
+                
+                if column_name in target_df.columns:
+                    # Column already exists - show warning dialog
+                    result = messagebox.askyesnocancel(
+                        "Column Already Exists",
+                        f"A column named '{column_name}' already exists in {target_file}.\n\n"
+                        f"Do you want to overwrite it?\n\n"
+                        f"Yes: Overwrite the existing column\n"
+                        f"No: Cancel and choose a different name\n"
+                        f"Cancel: Cancel the operation"
+                    )
+                    
+                    if result is True:
+                        # User chose to overwrite
+                        return True
+                    elif result is False:
+                        # User chose to change the name - focus on column name field
+                        messagebox.showinfo("Choose Different Name", 
+                                          f"Please choose a different column name to avoid overwriting '{column_name}'.")
+                        return False
+                    else:
+                        # User cancelled
+                        return False
+                        
+            except Exception as e:
+                # If we can't read the file, proceed anyway
+                print(f"Warning: Could not check for column collision: {e}")
+                return True
+        
+        # No collision or file doesn't exist
+        return True
     
     def on_processing_type_change(self, event=None):
         """Update parameters based on processing type."""
@@ -482,15 +638,20 @@ class DataProcessingGUI:
         
         if processing_type == "Matrix Extraction":
             self.create_matrix_extraction_params()
+            self.preview_button.config(text="Preview Matrix")
         elif processing_type == "Matrix Modification":
             self.create_matrix_modification_params()
+            self.preview_button.config(text="Preview Matrix")
         elif processing_type == "Data Annotation":
             self.create_data_annotation_params()
+            self.preview_button.config(text="Preview Matrix")
         elif processing_type == "Indexing":
             self.create_indexing_params()
+            self.preview_button.config(text="Preview Indexing")
         else:
             # Fallback to Matrix Extraction for unknown types
             self.create_matrix_extraction_params()
+            self.preview_button.config(text="Preview Matrix")
     
     def load_datasets(self):
         """Load available datasets."""
@@ -529,6 +690,9 @@ class DataProcessingGUI:
                 # Update dimension dropdown if Data Annotation is selected
                 elif self.processing_type_var.get() == "Data Annotation":
                     self.update_dimension_dropdown()
+                # Update browse path if Indexing is selected
+                elif self.processing_type_var.get() == "Indexing":
+                    self.update_default_browse_path()
     
     def start_processing(self):
         """Start a processing job."""
@@ -580,10 +744,24 @@ class DataProcessingGUI:
                 messagebox.showwarning("Missing Indexing Type", "Please select an indexing type (Row or Column).")
                 return
             
-            matrix_name = self.param_vars.get('matrix_name', tk.StringVar()).get().strip()
-            if not matrix_name:
-                messagebox.showwarning("Missing Matrix Name", "Please provide a matrix name.")
+            selected_file = self.param_vars.get('selected_file', tk.StringVar()).get().strip()
+            if not selected_file:
+                messagebox.showwarning("Missing CSV File", "Please select a CSV file containing the vector data.")
                 return
+            
+            vector_column = self.param_vars.get('vector_column', tk.StringVar()).get().strip()
+            if not vector_column:
+                messagebox.showwarning("Missing Vector Column", "Please select a vector column from the CSV file.")
+                return
+            
+            column_name = self.param_vars.get('column_name', tk.StringVar()).get().strip()
+            if not column_name:
+                messagebox.showwarning("Missing Column Name", "Please provide a name for the index column.")
+                return
+            
+            # Check for column name collision
+            if not self.check_indexing_column_collision(indexing_type, column_name):
+                return  # User cancelled due to collision
         
         try:
             # Collect parameters
@@ -621,9 +799,9 @@ class DataProcessingGUI:
                 job_name = f"Data_Annotation_{annotation_name}"
             elif processing_type == "Indexing":
                 # Generate job name for Indexing
-                matrix_name = parameters.get('matrix_name', 'Raster')
+                column_name = parameters.get('column_name', 'index')
                 indexing_type = parameters.get('indexing_type', 'Row Indexing')
-                job_name = f"Indexing_{matrix_name}_{indexing_type.replace(' ', '_')}"
+                job_name = f"Indexing_{column_name}_{indexing_type.replace(' ', '_')}"
             else:
                 # Generate job name from matrix name for other processing types
                 matrix_name = parameters.get('matrix_name', 'extracted_matrix')
@@ -650,9 +828,16 @@ class DataProcessingGUI:
             messagebox.showerror("Error", f"Failed to start processing: {str(e)}")
     
     def preview_matrix(self):
-        """Preview the matrix extraction."""
+        """Preview the processing operation."""
         if not self.selected_dataset:
             messagebox.showwarning("No Dataset", "Please select a dataset to preview.")
+            return
+        
+        processing_type = self.processing_type_var.get()
+        
+        # Handle Indexing preview differently
+        if processing_type == "Indexing":
+            self.preview_indexing()
             return
         
         try:
@@ -688,6 +873,71 @@ class DataProcessingGUI:
                 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to generate preview: {str(e)}")
+    
+    def preview_indexing(self):
+        """Preview the indexing operation."""
+        # Validate required parameters
+        selected_file = self.param_vars.get('selected_file', tk.StringVar()).get().strip()
+        if not selected_file:
+            messagebox.showwarning("Missing CSV File", "Please select a CSV file containing the vector data.")
+            return
+        
+        vector_column = self.param_vars.get('vector_column', tk.StringVar()).get().strip()
+        if not vector_column:
+            messagebox.showwarning("Missing Vector Column", "Please select a vector column from the CSV file.")
+            return
+        
+        column_name = self.param_vars.get('column_name', tk.StringVar()).get().strip()
+        if not column_name:
+            messagebox.showwarning("Missing Column Name", "Please provide a name for the index column.")
+            return
+        
+        try:
+            # Load the source CSV file
+            if not os.path.exists(selected_file):
+                messagebox.showerror("File Not Found", f"Source CSV file not found: {selected_file}")
+                return
+            
+            source_df = pd.read_csv(selected_file)
+            
+            # Check if the specified column exists
+            if vector_column not in source_df.columns:
+                messagebox.showerror("Column Not Found", f"Column '{vector_column}' not found in {selected_file}")
+                return
+            
+            # Extract the vector data
+            vector_data = source_df[vector_column]
+            
+            # Convert to numeric, handling any non-numeric values
+            try:
+                vector_numeric = pd.to_numeric(vector_data, errors='coerce')
+            except Exception:
+                messagebox.showerror("Data Error", f"Column '{vector_column}' contains non-numeric data that cannot be converted")
+                return
+            
+            # Check for NaN values after conversion
+            if vector_numeric.isna().any():
+                messagebox.showerror("Data Error", f"Column '{vector_column}' contains non-numeric values that cannot be processed")
+                return
+            
+            # Generate indices: highest value gets index 1, second highest gets index 2, etc.
+            indices = vector_numeric.rank(method='first', ascending=False).astype(int)
+            
+            # Create sorted values based on indices
+            sorted_values = vector_numeric.iloc[indices.argsort()]
+            
+            # Prepare preview data
+            preview_data = pd.DataFrame({
+                'Original_Values': vector_numeric,
+                'Indices': indices,
+                'Sorted_Values': sorted_values.values
+            })
+            
+            # Show the indexing preview window
+            self.show_indexing_preview_window(preview_data, column_name, vector_column)
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate indexing preview: {str(e)}")
     
     def show_preview_window(self, preview_result):
         """Show preview in a separate window."""
@@ -734,6 +984,70 @@ class DataProcessingGUI:
         
         # Close button
         ttk.Button(preview_window, text="Close", command=preview_window.destroy).pack(pady=10)
+    
+    def show_indexing_preview_window(self, preview_data, column_name, vector_column):
+        """Show indexing preview in a separate window with three columns."""
+        preview_window = tk.Toplevel(self.window)
+        preview_window.title(f"Indexing Preview - {column_name}")
+        preview_window.geometry("900x700")
+        
+        # Info frame
+        info_frame = ttk.Frame(preview_window)
+        info_frame.pack(fill="x", padx=10, pady=5)
+        
+        info_text = f"Vector Column: {vector_column}\n"
+        info_text += f"Index Column Name: {column_name}\n"
+        info_text += f"Total Values: {len(preview_data)}\n"
+        info_text += f"Unique Values: {preview_data['Original_Values'].nunique()}"
+        
+        ttk.Label(info_frame, text=info_text, font=("Arial", 10)).pack(anchor="w")
+        
+        # Preview frame with scrollbars
+        preview_frame = ttk.Frame(preview_window)
+        preview_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Create Treeview for tabular display
+        tree_frame = ttk.Frame(preview_frame)
+        tree_frame.pack(fill="both", expand=True)
+        
+        # Treeview with three columns
+        columns = ('original', 'indices', 'sorted')
+        tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=25)
+        
+        # Define column headings
+        tree.heading('original', text='Original Values')
+        tree.heading('indices', text='Indices')
+        tree.heading('sorted', text='Sorted Values')
+        
+        # Configure column widths
+        tree.column('original', width=200, anchor='center')
+        tree.column('indices', width=100, anchor='center')
+        tree.column('sorted', width=200, anchor='center')
+        
+        # Add scrollbars
+        v_scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        h_scrollbar = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
+        
+        tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        
+        # Pack scrollbars and tree
+        v_scrollbar.pack(side="right", fill="y")
+        h_scrollbar.pack(side="bottom", fill="x")
+        tree.pack(side="left", fill="both", expand=True)
+        
+        # Insert data into the tree
+        for i in range(len(preview_data)):
+            original_val = f"{preview_data.iloc[i]['Original_Values']:.6f}"
+            index_val = str(preview_data.iloc[i]['Indices'])
+            sorted_val = f"{preview_data.iloc[i]['Sorted_Values']:.6f}"
+            
+            tree.insert('', 'end', values=(original_val, index_val, sorted_val))
+        
+        # Button frame
+        button_frame = ttk.Frame(preview_window)
+        button_frame.pack(fill="x", padx=10, pady=10)
+        
+        ttk.Button(button_frame, text="Close", command=preview_window.destroy).pack(side="right", padx=5)
     
     def real_processing(self, job_id, processing_type, parameters):
         """Perform actual matrix extraction processing."""

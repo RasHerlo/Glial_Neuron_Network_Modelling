@@ -848,25 +848,29 @@ class IndexingProcessor(BaseProcessor):
     def get_default_parameters(self) -> Dict[str, Any]:
         return {
             'indexing_type': 'Row Indexing',
-            'matrix_name': 'Raster'
+            'selected_file': '',
+            'vector_column': '',
+            'column_name': ''
         }
     
     def get_progress_steps(self) -> List[str]:
         """Return progress step descriptions for Indexing."""
         return [
-            "Loading label files",
-            "Validating file structure",
-            "Processing indexing",
+            "Loading source CSV file",
+            "Generating indices from vector data",
+            "Checking for column name conflicts",
+            "Saving index column to target file",
             "Completed"
         ]
     
     def validate_parameters(self, parameters: Dict[str, Any]) -> bool:
         """Validate indexing parameters."""
-        required_params = ['indexing_type', 'matrix_name', 'dataset_name']
+        required_params = ['indexing_type', 'selected_file', 'vector_column', 'column_name', 'dataset_name']
         for param in required_params:
-            if param not in parameters:
+            if param not in parameters or not parameters[param]:
                 return False
         
+        # Check if indexing type is valid
         if parameters['indexing_type'] not in ['Row Indexing', 'Column Indexing']:
             return False
         
@@ -883,55 +887,107 @@ class IndexingProcessor(BaseProcessor):
                 progress_callback(percent)
         
         try:
-            # Step 1: Loading label files (25%)
-            update_progress(25.0)
+            # Step 1: Loading source CSV file (20%)
+            update_progress(20.0)
             
             dataset_name = parameters['dataset_name']
-            matrix_name = parameters['matrix_name']
+            selected_file = parameters['selected_file']
+            vector_column = parameters['vector_column']
+            column_name = parameters['column_name']
             indexing_type = parameters['indexing_type']
             
-            # Determine which file to process
+            # Load the source CSV file
+            if not os.path.exists(selected_file):
+                raise FileNotFoundError(f"Source CSV file not found: {selected_file}")
+            
+            source_df = pd.read_csv(selected_file)
+            
+            # Check if the specified column exists
+            if vector_column not in source_df.columns:
+                raise ValueError(f"Column '{vector_column}' not found in {selected_file}")
+            
+            # Step 2: Generating indices from vector data (40%)
+            update_progress(40.0)
+            
+            # Extract the vector data
+            vector_data = source_df[vector_column]
+            
+            # Convert to numeric, handling any non-numeric values
+            try:
+                vector_numeric = pd.to_numeric(vector_data, errors='coerce')
+            except Exception:
+                raise ValueError(f"Column '{vector_column}' contains non-numeric data that cannot be converted")
+            
+            # Check for NaN values after conversion
+            if vector_numeric.isna().any():
+                raise ValueError(f"Column '{vector_column}' contains non-numeric values that cannot be processed")
+            
+            # Generate indices: highest value gets index 1, second highest gets index 2, etc.
+            # Use rank with method='first' to handle ties consecutively
+            indices = vector_numeric.rank(method='first', ascending=False).astype(int)
+            
+            # Step 3: Checking for column name conflicts (60%)
+            update_progress(60.0)
+            
+            # Determine target file path
             if indexing_type == 'Row Indexing':
-                file_name = f"{matrix_name}_row_labels_and_indices.csv"
+                target_file = f"Raster_row_labels_and_indices.csv"
             else:  # Column Indexing
-                file_name = f"{matrix_name}_column_labels_and_indices.csv"
+                target_file = f"Raster_column_labels_and_indices.csv"
             
-            file_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", file_name)
+            target_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", target_file)
             
-            # Check if file exists
-            if not os.path.exists(file_path):
-                raise FileNotFoundError(f"Label file not found: {file_path}")
+            # Check if target file exists and load it
+            if os.path.exists(target_path):
+                target_df = pd.read_csv(target_path)
+                
+                # Check if column name already exists
+                if column_name in target_df.columns:
+                    # This should be handled by the GUI, but we'll note it here
+                    print(f"Warning: Column '{column_name}' already exists in {target_file}")
+            else:
+                # Create new target file with appropriate structure
+                if indexing_type == 'Row Indexing':
+                    target_df = pd.DataFrame({'row_labels': [f'C{i:03d}' for i in range(len(indices))]})
+                else:
+                    target_df = pd.DataFrame({'column_labels': range(len(indices))})
             
-            # Step 2: Validating file structure (50%)
-            update_progress(50.0)
+            # Step 4: Saving index column to target file (80%)
+            update_progress(80.0)
             
-            # Load the file to validate structure
-            labels_df = pd.read_csv(file_path)
+            # Add the new index column
+            target_df[column_name] = indices
             
-            # Basic validation - should have at least one column
-            if labels_df.empty:
-                raise ValueError(f"Label file is empty: {file_path}")
+            # Ensure the target directory exists
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
             
-            # Step 3: Processing indexing (75%)
-            update_progress(75.0)
+            # Save the updated file
+            target_df.to_csv(target_path, index=False)
             
-            # TODO: Add actual indexing logic here in future implementation
-            # For now, just validate that the file can be processed
-            
-            # Step 4: Completed (100%)
+            # Step 5: Completed (100%)
             update_progress(100.0)
+            
+            # Prepare preview data for potential preview window
+            preview_data = pd.DataFrame({
+                'Original_Values': vector_numeric,
+                'Indices': indices,
+                'Sorted_Values': vector_numeric.iloc[indices.argsort()]
+            })
             
             return {
                 'success': True,
-                'data': labels_df,
+                'data': preview_data,
                 'statistics': {
                     'indexing_type': indexing_type,
-                    'matrix_name': matrix_name,
-                    'file_path': file_path,
-                    'labels_count': len(labels_df)
+                    'source_file': selected_file,
+                    'vector_column': vector_column,
+                    'column_name': column_name,
+                    'target_file': target_path,
+                    'vector_length': len(vector_numeric),
+                    'unique_values': len(vector_numeric.unique())
                 },
-                'output_path': file_path,
-                'message': f'Indexing validation completed for {indexing_type}. File: {file_path}, Labels: {len(labels_df)}'
+                'output_path': target_path,
+                'message': f'Indexing completed successfully. Added column "{column_name}" to {target_file}'
             }
             
         except FileNotFoundError as e:
@@ -939,7 +995,14 @@ class IndexingProcessor(BaseProcessor):
                 'success': False,
                 'data': None,
                 'statistics': None,
-                'message': f'Label file not found: {str(e)}'
+                'message': f'File not found: {str(e)}'
+            }
+        except ValueError as e:
+            return {
+                'success': False,
+                'data': None,
+                'statistics': None,
+                'message': f'Data validation error: {str(e)}'
             }
         except Exception as e:
             return {
