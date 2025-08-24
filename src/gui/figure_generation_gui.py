@@ -51,6 +51,16 @@ class FigureGenerationGUI:
                 "annotation_enabled_default": False
             }
         },
+        "MatrixVisualization": {
+            "description": "Visualize similarity matrices and other 2D matrices with customizable colormaps",
+            "file_types": [".npy"],
+            "required_files": [
+                {"name": "matrix", "label": "Matrix", "description": "Matrix file (.npy)", "pattern": "*", "extension": ".npy"}
+            ],
+            "controls": {
+                "colormap": ["binary", "jet", "viridis", "gist_earth"]
+            }
+        },
         "TuningCurve": {
             "description": "Analyze neuron responses around stimulus events with tuning curves",
             "file_types": [".npy", ".csv"],
@@ -662,6 +672,8 @@ class FigureGenerationGUI:
         # Handle RasterPlot mode specifically
         if mode == "RasterPlot":
             self.create_rasterplot_file_widgets(mode_config)
+        elif mode == "MatrixVisualization":
+            self.create_matrix_visualization_file_widgets(mode_config)
         elif mode == "TuningCurve":
             self.create_tuning_curve_file_widgets(mode_config)
         else:
@@ -883,6 +895,37 @@ class FigureGenerationGUI:
             'name_entry': annotation_name_entry
         }
     
+    def create_matrix_visualization_file_widgets(self, mode_config):
+        """Create MatrixVisualization-specific file selection widgets."""
+        # Matrix selection
+        matrix_frame = ttk.Frame(self.file_requirements_container)
+        matrix_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(matrix_frame, text="Matrix:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        matrix_var = tk.StringVar()
+        matrix_combo = ttk.Combobox(matrix_frame, textvariable=matrix_var, state="readonly", width=40)
+        matrix_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Filter for .npy files and prioritize Ruzicka files
+        if hasattr(self, 'available_files'):
+            npy_files = self.filter_files_by_type([".npy"])
+            # Sort so Ruzicka files appear first
+            ruzicka_files = [f for f in npy_files if os.path.basename(f).startswith("Ruzicka")]
+            other_files = [f for f in npy_files if not os.path.basename(f).startswith("Ruzicka")]
+            sorted_files = ruzicka_files + other_files
+            matrix_combo['values'] = sorted_files
+        
+        matrix_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Store reference
+        self.file_selection_widgets['matrix'] = {
+            'var': matrix_var,
+            'combo': matrix_combo,
+            'frame': matrix_frame,
+            'config': mode_config['required_files'][0]
+        }
+    
     def create_tuning_curve_file_widgets(self, mode_config):
         """Create TuningCurve-specific file selection widgets."""
         # Initialize TuningCurve-specific variables
@@ -1102,6 +1145,10 @@ class FigureGenerationGUI:
         if mode == "RasterPlot":
             return 'raster_matrix' in self.file_selection_widgets and self.file_selection_widgets['raster_matrix']['var'].get()
         
+        # For MatrixVisualization, only matrix is required
+        elif mode == "MatrixVisualization":
+            return 'matrix' in self.file_selection_widgets and self.file_selection_widgets['matrix']['var'].get()
+        
         # For TuningCurve, both raster_matrix and annotation are required
         elif mode == "TuningCurve":
             return ('raster_matrix' in self.file_selection_widgets and 
@@ -1181,11 +1228,19 @@ class FigureGenerationGUI:
     
     def create_custom_mode_controls(self, mode, mode_config):
         """Create controls for custom modes based on their configuration."""
-        frame = ttk.LabelFrame(self.mode_controls_frame, text=f"{mode} Controls", padding=5)
+        # Set frame title based on mode
+        if mode == "MatrixVisualization":
+            frame_title = "Matrix Controls"
+        else:
+            frame_title = f"{mode} Controls"
+        
+        frame = ttk.LabelFrame(self.mode_controls_frame, text=frame_title, padding=5)
         frame.pack(fill="x", pady=5)
         
         if mode == "RasterPlot":
             self.create_rasterplot_controls(frame, mode_config)
+        elif mode == "MatrixVisualization":
+            self.create_matrix_visualization_controls(frame, mode_config)
         elif mode == "TuningCurve":
             self.create_tuning_curve_controls(frame, mode_config)
         else:
@@ -1203,6 +1258,18 @@ class FigureGenerationGUI:
         # Colormap selection
         ttk.Label(parent_frame, text="Colormap:").grid(row=0, column=0, sticky="w", padx=5)
         colormap_combo = ttk.Combobox(parent_frame, textvariable=self.raster_colormap,
+                                    values=mode_config['controls']['colormap'], state="readonly", width=15)
+        colormap_combo.grid(row=0, column=1, padx=5, pady=2)
+        colormap_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
+    
+    def create_matrix_visualization_controls(self, parent_frame, mode_config):
+        """Create MatrixVisualization-specific controls."""
+        # Initialize colormap variable
+        self.matrix_colormap = tk.StringVar(value=mode_config['controls']['colormap'][0])
+        
+        # Colormap selection
+        ttk.Label(parent_frame, text="Colormap:").grid(row=0, column=0, sticky="w", padx=5)
+        colormap_combo = ttk.Combobox(parent_frame, textvariable=self.matrix_colormap,
                                     values=mode_config['controls']['colormap'], state="readonly", width=15)
         colormap_combo.grid(row=0, column=1, padx=5, pady=2)
         colormap_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
@@ -1257,7 +1324,7 @@ class FigureGenerationGUI:
 
     def toggle_sorting_section(self, mode):
         """Show or hide the sorting section based on the selected mode."""
-        if mode == "RasterPlot":
+        if mode == "RasterPlot" or mode == "MatrixVisualization":
             self.sorting_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
             self.populate_sorting_vectors()
         else:
@@ -1571,6 +1638,8 @@ class FigureGenerationGUI:
         
         if mode == "RasterPlot":
             self.generate_rasterplot_figure()
+        elif mode == "MatrixVisualization":
+            self.generate_matrix_visualization_figure()
         elif mode == "TuningCurve":
             self.generate_tuning_curve_figure()
         else:
@@ -1721,6 +1790,95 @@ class FigureGenerationGUI:
                                   ha='center', va='center', transform=self.inspection_ax.transAxes,
                                   fontsize=10, color='red')
             print(f"RasterPlot error: {e}")
+    
+    def generate_matrix_visualization_figure(self):
+        """Generate MatrixVisualization visualization."""
+        try:
+            # Check if matrix is selected
+            if 'matrix' not in self.file_selection_widgets or not self.file_selection_widgets['matrix']['var'].get():
+                self.inspection_ax.text(0.5, 0.5, 'Please select a Matrix file', 
+                                      ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                      fontsize=12, alpha=0.7)
+                return
+            
+            # Load matrix
+            matrix_file = self.file_selection_widgets['matrix']['var'].get()
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            matrix_path = os.path.join(dataset_path, matrix_file)
+            
+            # Load matrix data
+            matrix_data = np.load(matrix_path)
+            
+            # Check if matrix is 2D
+            if matrix_data.ndim != 2:
+                self.inspection_ax.text(0.5, 0.5, f'Matrix must be 2D. Current shape: {matrix_data.shape}', 
+                                      ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                      fontsize=12, color='red')
+                return
+            
+            # Handle invalid data by replacing with NaN
+            if not np.isfinite(matrix_data).all():
+                matrix_data = np.where(np.isfinite(matrix_data), matrix_data, np.nan)
+            
+            # Apply sorting if enabled
+            matrix_data, _, _ = self.apply_sorting_to_matrix(matrix_data, None, None)
+            
+            # Clear the figure
+            self.inspection_fig.clear()
+            self.inspection_ax = self.inspection_fig.add_subplot(111)
+            
+            # Create the matrix visualization
+            colormap = self.matrix_colormap.get()
+            im = self.inspection_ax.imshow(matrix_data, cmap=colormap, aspect='equal')
+            
+            # Set title
+            dataset_name = self.selected_dataset.name
+            matrix_filename = os.path.basename(matrix_file)
+            matrix_name = os.path.splitext(matrix_filename)[0]
+            figure_title = f"{dataset_name} {matrix_name}"
+            self.inspection_ax.set_title(figure_title)
+            
+            # Set axis labels
+            self.inspection_ax.set_xlabel("Columns")
+            self.inspection_ax.set_ylabel("Rows")
+            
+            # Set tick labels to show actual matrix dimensions
+            # For large matrices, show fewer ticks to avoid overcrowding
+            max_ticks = 10  # Maximum number of ticks to show
+            
+            # Handle row ticks (y-axis)
+            if matrix_data.shape[0] <= max_ticks:
+                # Show all ticks for small matrices
+                y_positions = list(range(matrix_data.shape[0]))
+                y_labels = [str(i + 1) for i in range(matrix_data.shape[0])]
+            else:
+                # Show evenly spaced ticks for large matrices
+                step = (matrix_data.shape[0] - 1) / (max_ticks - 1)
+                y_positions = [int(round(i * step)) for i in range(max_ticks)]
+                y_labels = [str(pos + 1) for pos in y_positions]
+            
+            self.inspection_ax.set_yticks(y_positions)
+            self.inspection_ax.set_yticklabels(y_labels)
+            
+            # Handle column ticks (x-axis)
+            if matrix_data.shape[1] <= max_ticks:
+                # Show all ticks for small matrices
+                x_positions = list(range(matrix_data.shape[1]))
+                x_labels = [str(i + 1) for i in range(matrix_data.shape[1])]
+            else:
+                # Show evenly spaced ticks for large matrices
+                step = (matrix_data.shape[1] - 1) / (max_ticks - 1)
+                x_positions = [int(round(i * step)) for i in range(max_ticks)]
+                x_labels = [str(pos + 1) for pos in x_positions]
+            
+            self.inspection_ax.set_xticks(x_positions)
+            self.inspection_ax.set_xticklabels(x_labels, rotation=45)
+            
+        except Exception as e:
+            self.inspection_ax.text(0.5, 0.5, f'Error generating Matrix Visualization:\n{str(e)}', 
+                                  ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                  fontsize=10, color='red')
+            print(f"MatrixVisualization error: {e}")
     
     def generate_tuning_curve_figure(self):
         """Generate Tuning Curve visualization."""
