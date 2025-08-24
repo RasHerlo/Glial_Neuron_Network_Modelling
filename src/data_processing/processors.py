@@ -1013,6 +1013,262 @@ class IndexingProcessor(BaseProcessor):
             }
 
 
+class RuzickaSimilarityProcessor(BaseProcessor):
+    """Processor for calculating Ruzicka similarity matrices between neurons."""
+    
+    def __init__(self):
+        super().__init__("Ruzicka Similarity")
+        self.description = "Calculate Ruzicka similarity matrix between neurons"
+    
+    def get_default_parameters(self) -> Dict[str, Any]:
+        return {
+            'matrix': None,  # Will be populated dynamically from available matrices
+            'matrix_name': 'Ruzicka Matrix'  # Default output name
+        }
+    
+    def get_progress_steps(self) -> List[str]:
+        """Return progress step descriptions for Ruzicka Similarity."""
+        return [
+            "Validating matrix file",
+            "Loading matrix data",
+            "Calculating Ruzicka similarities",
+            "Saving similarity matrix",
+            "Completed"
+        ]
+    
+    def find_matrix_files(self, dataset_name: str) -> List[str]:
+        """Find all .npy files in the dataset's processed/matrices folder."""
+        matrices_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+        
+        if not os.path.exists(matrices_path):
+            return []
+        
+        matrix_files = []
+        for file in os.listdir(matrices_path):
+            if file.endswith('.npy'):
+                # Remove .npy extension: "Raster_matrix.npy" -> "Raster_matrix"
+                base_name = file[:-4]  # Remove last 4 characters (.npy)
+                matrix_files.append(base_name)
+        
+        return sorted(matrix_files)  # Sort alphabetically
+    
+    def calculate_ruzicka_similarity(self, neuron1: np.ndarray, neuron2: np.ndarray) -> float:
+        """Calculate Ruzicka similarity between two neurons.
+        
+        Ruzicka similarity = sum(min(neuron1, neuron2)) / sum(max(neuron1, neuron2))
+        """
+        # Handle NaN values - if either neuron has NaN, return NaN
+        if np.any(np.isnan(neuron1)) or np.any(np.isnan(neuron2)):
+            return np.nan
+        
+        # Calculate min and max for each pair of values
+        min_vals = np.minimum(neuron1, neuron2)
+        max_vals = np.maximum(neuron1, neuron2)
+        
+        # Sum the mins and maxes
+        sum_min = np.sum(min_vals)
+        sum_max = np.sum(max_vals)
+        
+        # Avoid division by zero
+        if sum_max == 0:
+            return 0.0
+        
+        return sum_min / sum_max
+    
+    def calculate_ruzicka_matrix(self, matrix_data: np.ndarray) -> np.ndarray:
+        """Calculate Ruzicka similarity matrix for all pairs of neurons.
+        
+        Args:
+            matrix_data: 2D array where rows are neurons and columns are time points
+            
+        Returns:
+            2D array where (i,j) contains Ruzicka similarity between neuron i and neuron j
+        """
+        n_neurons = matrix_data.shape[0]
+        similarity_matrix = np.zeros((n_neurons, n_neurons))
+        
+        # Calculate similarity for each pair of neurons
+        for i in range(n_neurons):
+            for j in range(n_neurons):
+                similarity_matrix[i, j] = self.calculate_ruzicka_similarity(
+                    matrix_data[i, :], matrix_data[j, :]
+                )
+        
+        return similarity_matrix
+    
+    def get_preview(self, parameters: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Generate a preview of the Ruzicka similarity matrix."""
+        if parameters is None:
+            parameters = self.get_default_parameters()
+        
+        try:
+            # Get parameters
+            matrix_name = parameters.get('matrix')
+            output_matrix_name = parameters.get('matrix_name', 'Ruzicka Matrix')
+            dataset_name = parameters.get('dataset_name', 'unknown_dataset')
+            
+            if not matrix_name:
+                return {
+                    'success': False,
+                    'message': 'No matrix selected for Ruzicka similarity calculation'
+                }
+            
+            # Construct matrix file path
+            matrix_file_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", f"{matrix_name}.npy")
+            
+            # Validate matrix file exists
+            if not os.path.exists(matrix_file_path):
+                return {
+                    'success': False,
+                    'message': f'Matrix file not found: {matrix_file_path}'
+                }
+            
+            # Load matrix data
+            matrix_data = np.load(matrix_file_path)
+            
+            # Validate matrix is 2D
+            if len(matrix_data.shape) != 2:
+                return {
+                    'success': False,
+                    'message': f'Matrix must be 2D, got shape: {matrix_data.shape}'
+                }
+            
+            # Calculate Ruzicka similarity matrix
+            similarity_matrix = self.calculate_ruzicka_matrix(matrix_data)
+            
+            # Generate output filename with matrix suffix
+            matrix_suffix = matrix_name.split('_')[-1] if '_' in matrix_name else matrix_name
+            output_filename = f"{output_matrix_name}_{matrix_suffix}"
+            
+            # Create preview (show first 10x10 elements)
+            preview_size = min(10, similarity_matrix.shape[0], similarity_matrix.shape[1])
+            preview_matrix = similarity_matrix[:preview_size, :preview_size]
+            
+            # Convert to DataFrame for better display
+            import pandas as pd
+            preview_df = pd.DataFrame(preview_matrix)
+            
+            return {
+                'success': True,
+                'matrix_name': output_filename,
+                'full_shape': similarity_matrix.shape,
+                'preview_shape': preview_matrix.shape,
+                'preview_matrix': preview_df,
+                'transposed': False,
+                'message': f'Ruzicka similarity matrix preview generated successfully'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Failed to generate Ruzicka similarity preview: {str(e)}'
+            }
+    
+    def process_with_progress(self, parameters: Dict[str, Any] = None, 
+                            progress_callback: Callable[[float], None] = None) -> Dict[str, Any]:
+        """Process the matrix to calculate Ruzicka similarity matrix."""
+        if parameters is None:
+            parameters = self.get_default_parameters()
+        
+        def update_progress(percent: float):
+            if progress_callback:
+                progress_callback(percent)
+        
+        try:
+            # Step 1: Validate matrix file (20%)
+            update_progress(20.0)
+            # Get parameters
+            matrix_name = parameters.get('matrix')
+            output_matrix_name = parameters.get('matrix_name', 'Ruzicka Matrix')
+            dataset_name = parameters.get('dataset_name', 'unknown_dataset')
+            
+            if not matrix_name:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': 'No matrix selected for Ruzicka similarity calculation'
+                }
+            
+            # Construct matrix file path
+            matrix_file_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", f"{matrix_name}.npy")
+            
+            # Validate matrix file exists
+            if not os.path.exists(matrix_file_path):
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Matrix file not found: {matrix_file_path}'
+                }
+            
+            # Step 2: Load matrix data (40%)
+            update_progress(40.0)
+            matrix_data = np.load(matrix_file_path)
+            
+            # Validate matrix is 2D
+            if len(matrix_data.shape) != 2:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Matrix must be 2D, got shape: {matrix_data.shape}'
+                }
+            
+            # Step 3: Calculate Ruzicka similarity matrix (70%)
+            update_progress(70.0)
+            similarity_matrix = self.calculate_ruzicka_matrix(matrix_data)
+            
+            # Generate output filename with matrix suffix
+            matrix_suffix = matrix_name.split('_')[-1] if '_' in matrix_name else matrix_name
+            output_filename = f"{output_matrix_name}_{matrix_suffix}"
+            
+            # Step 4: Save similarity matrix (90%)
+            update_progress(90.0)
+            output_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Save as .npy file
+            output_path = os.path.join(output_dir, f"{output_filename}.npy")
+            np.save(output_path, similarity_matrix)
+            
+            # Calculate statistics
+            statistics = {
+                'input_matrix_shape': matrix_data.shape,
+                'similarity_matrix_shape': similarity_matrix.shape,
+                'input_matrix_name': matrix_name,
+                'output_matrix_name': output_filename,
+                'similarity_matrix_stats': {
+                    'mean': float(np.nanmean(similarity_matrix)),
+                    'std': float(np.nanstd(similarity_matrix)),
+                    'min': float(np.nanmin(similarity_matrix)),
+                    'max': float(np.nanmax(similarity_matrix)),
+                    'nan_count': int(np.isnan(similarity_matrix).sum())
+                },
+                'output_file': output_path,
+                'output_format': '.npy'
+            }
+            
+            # Step 5: Completed (100%)
+            update_progress(100.0)
+            
+            return {
+                'success': True,
+                'data': similarity_matrix,
+                'statistics': statistics,
+                'output_path': output_path,
+                'message': f'Ruzicka similarity matrix calculated successfully. Output saved to: {output_path}'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'data': None,
+                'statistics': None,
+                'message': f'Ruzicka similarity calculation failed: {str(e)}'
+            }
+
+
 class DataProcessingManager:
     """Manager class for coordinating different data processors."""
     
@@ -1021,7 +1277,8 @@ class DataProcessingManager:
             'Matrix Extraction': MatrixExtractionProcessor(),
             'Matrix Modification': MatrixModificationProcessor(),
             'Data Annotation': DataAnnotationProcessor(),
-            'Indexing': IndexingProcessor()
+            'Indexing': IndexingProcessor(),
+            'Ruzicka Similarity': RuzickaSimilarityProcessor()
         }
     
     def get_processor(self, processor_name: str) -> Optional[BaseProcessor]:

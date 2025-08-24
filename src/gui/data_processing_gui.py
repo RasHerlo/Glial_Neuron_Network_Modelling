@@ -503,6 +503,67 @@ class DataProcessingGUI:
         # Initialize file browser with dataset path if available
         self.update_default_browse_path()
     
+    def create_ruzicka_similarity_params(self):
+        """Create parameter widgets for Ruzicka Similarity."""
+        # Clear existing params
+        for widget in self.params_frame.winfo_children():
+            widget.destroy()
+        self.param_vars.clear()
+        
+        # Matrix dropdown (will be populated based on selected dataset)
+        ttk.Label(self.params_frame, text="Matrix:").grid(row=0, column=0, sticky="w", padx=5)
+        self.param_vars['matrix'] = tk.StringVar()
+        self.ruzicka_matrix_combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars['matrix'],
+                                                values=[], state="readonly", width=20)
+        self.ruzicka_matrix_combo.grid(row=0, column=1, padx=5)
+        self.ruzicka_matrix_combo.bind('<<ComboboxSelected>>', self.on_ruzicka_matrix_selection_change)
+        
+        # Matrix Name
+        ttk.Label(self.params_frame, text="Matrix Name:").grid(row=1, column=0, sticky="w", padx=5)
+        self.param_vars['matrix_name'] = tk.StringVar(value='Ruzicka Matrix')
+        ttk.Entry(self.params_frame, textvariable=self.param_vars['matrix_name'], 
+                 width=20).grid(row=1, column=1, padx=5)
+        
+        # Update matrix dropdown based on currently selected dataset
+        self.update_ruzicka_matrix_dropdown()
+    
+    def update_ruzicka_matrix_dropdown(self):
+        """Update matrix dropdown based on selected dataset for Ruzicka Similarity."""
+        if not self.selected_dataset:
+            self.ruzicka_matrix_combo['values'] = []
+            return
+        
+        # Get available matrices for the selected dataset
+        from src.data_processing.processors import DataProcessingManager
+        manager = DataProcessingManager()
+        ruzicka_processor = manager.get_processor("Ruzicka Similarity")
+        
+        if ruzicka_processor:
+            available_matrices = ruzicka_processor.find_matrix_files(self.selected_dataset.name)
+            self.ruzicka_matrix_combo['values'] = available_matrices
+            
+            # Clear current selection if no matrices available
+            if not available_matrices:
+                self.param_vars['matrix'].set('')
+            elif len(available_matrices) == 1:
+                # Auto-select if only one matrix available
+                self.param_vars['matrix'].set(available_matrices[0])
+                self.on_ruzicka_matrix_selection_change()
+    
+    def on_ruzicka_matrix_selection_change(self, event=None):
+        """Handle matrix selection change for Ruzicka Similarity - update matrix name."""
+        self.update_ruzicka_matrix_name()
+    
+    def update_ruzicka_matrix_name(self):
+        """Update matrix name based on selected matrix for Ruzicka Similarity."""
+        matrix_name = self.param_vars['matrix'].get()
+        
+        if matrix_name:
+            # Generate suggested name with matrix suffix
+            matrix_suffix = matrix_name.split('_')[-1] if '_' in matrix_name else matrix_name
+            suggested_name = f"Ruzicka Matrix_{matrix_suffix}"
+            self.param_vars['matrix_name'].set(suggested_name)
+    
     def update_default_browse_path(self):
         """Update the default browse path based on selected dataset."""
         if hasattr(self, 'selected_dataset') and self.selected_dataset:
@@ -648,6 +709,9 @@ class DataProcessingGUI:
         elif processing_type == "Indexing":
             self.create_indexing_params()
             self.preview_button.config(text="Preview Indexing")
+        elif processing_type == "Ruzicka Similarity":
+            self.create_ruzicka_similarity_params()
+            self.preview_button.config(text="Preview Matrix")
         else:
             # Fallback to Matrix Extraction for unknown types
             self.create_matrix_extraction_params()
@@ -693,6 +757,9 @@ class DataProcessingGUI:
                 # Update browse path if Indexing is selected
                 elif self.processing_type_var.get() == "Indexing":
                     self.update_default_browse_path()
+                # Update matrix dropdown if Ruzicka Similarity is selected
+                elif self.processing_type_var.get() == "Ruzicka Similarity":
+                    self.update_ruzicka_matrix_dropdown()
     
     def start_processing(self):
         """Start a processing job."""
@@ -763,6 +830,18 @@ class DataProcessingGUI:
             if not self.check_indexing_column_collision(indexing_type, column_name):
                 return  # User cancelled due to collision
         
+        # Additional validation for Ruzicka Similarity
+        if processing_type == "Ruzicka Similarity":
+            matrix_selected = self.param_vars.get('matrix', tk.StringVar()).get()
+            if not matrix_selected:
+                messagebox.showwarning("No Matrix Selected", "Please select a matrix to calculate Ruzicka similarity.")
+                return
+            
+            matrix_name = self.param_vars.get('matrix_name', tk.StringVar()).get().strip()
+            if not matrix_name:
+                messagebox.showwarning("Missing Matrix Name", "Please provide a name for the similarity matrix.")
+                return
+        
         try:
             # Collect parameters
             parameters = {}
@@ -802,6 +881,10 @@ class DataProcessingGUI:
                 column_name = parameters.get('column_name', 'index')
                 indexing_type = parameters.get('indexing_type', 'Row Indexing')
                 job_name = f"Indexing_{column_name}_{indexing_type.replace(' ', '_')}"
+            elif processing_type == "Ruzicka Similarity":
+                # Generate job name for Ruzicka Similarity
+                matrix_name = parameters.get('matrix_name', 'Ruzicka Matrix')
+                job_name = f"Ruzicka_Similarity_{matrix_name.replace(' ', '_')}"
             else:
                 # Generate job name from matrix name for other processing types
                 matrix_name = parameters.get('matrix_name', 'extracted_matrix')
@@ -840,6 +923,11 @@ class DataProcessingGUI:
             self.preview_indexing()
             return
         
+        # Handle Ruzicka Similarity preview
+        if processing_type == "Ruzicka Similarity":
+            self.preview_ruzicka_similarity()
+            return
+        
         try:
             # Collect parameters
             parameters = {}
@@ -873,6 +961,50 @@ class DataProcessingGUI:
                 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to generate preview: {str(e)}")
+    
+    def preview_ruzicka_similarity(self):
+        """Preview the Ruzicka similarity calculation."""
+        # Validate required parameters
+        matrix_selected = self.param_vars.get('matrix', tk.StringVar()).get().strip()
+        if not matrix_selected:
+            messagebox.showwarning("No Matrix Selected", "Please select a matrix to calculate Ruzicka similarity.")
+            return
+        
+        matrix_name = self.param_vars.get('matrix_name', tk.StringVar()).get().strip()
+        if not matrix_name:
+            messagebox.showwarning("Missing Matrix Name", "Please provide a name for the similarity matrix.")
+            return
+        
+        try:
+            # Collect parameters
+            parameters = {}
+            for key, var in self.param_vars.items():
+                if isinstance(var, tk.BooleanVar):
+                    parameters[key] = var.get()
+                else:
+                    value = var.get().strip()
+                    parameters[key] = value if value else None
+            
+            # Add dataset information
+            parameters['dataset_name'] = self.selected_dataset.name
+            
+            # Get Ruzicka Similarity processor and generate preview
+            from src.data_processing.processors import DataProcessingManager
+            manager = DataProcessingManager()
+            ruzicka_processor = manager.get_processor("Ruzicka Similarity")
+            
+            if ruzicka_processor:
+                preview_result = ruzicka_processor.get_preview(parameters)
+                
+                if preview_result['success']:
+                    self.show_preview_window(preview_result)
+                else:
+                    messagebox.showerror("Preview Error", preview_result['message'])
+            else:
+                messagebox.showerror("Error", "Ruzicka Similarity processor not found")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate Ruzicka similarity preview: {str(e)}")
     
     def preview_indexing(self):
         """Preview the indexing operation."""
