@@ -1269,6 +1269,290 @@ class RuzickaSimilarityProcessor(BaseProcessor):
             }
 
 
+class HierarchicalClusteringProcessor(BaseProcessor):
+    """Processor for performing hierarchical clustering on matrices."""
+    
+    def __init__(self):
+        super().__init__("Hierarchical Clustering")
+        self.description = "Perform agglomerative hierarchical clustering on matrix data"
+    
+    def get_default_parameters(self) -> Dict[str, Any]:
+        return {
+            'matrix': None,  # Will be populated dynamically from available matrices
+            'clustering_method': 'ward',
+            'distance_metric': 'euclidean',
+            'clustering_dimension': 'Cluster Rows (Neurons)',
+            'output_name_prefix': 'HAC'  # Will be auto-generated with matrix suffix
+        }
+    
+    def get_progress_steps(self) -> List[str]:
+        """Return progress step descriptions for Hierarchical Clustering."""
+        return [
+            "Validating matrix file",
+            "Loading matrix data", 
+            "Preparing data for clustering",
+            "Performing hierarchical clustering",
+            "Saving clustering results",
+            "Completed"
+        ]
+    
+    def find_matrix_files(self, dataset_name: str) -> List[str]:
+        """Find all .npy files in the dataset's processed/matrices folder."""
+        matrices_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+        
+        if not os.path.exists(matrices_path):
+            return []
+        
+        matrix_files = []
+        for file in os.listdir(matrices_path):
+            if file.endswith('.npy'):
+                # Remove .npy extension: "Raster_matrix.npy" -> "Raster_matrix"
+                base_name = file[:-4]  # Remove last 4 characters (.npy)
+                matrix_files.append(base_name)
+        
+        return sorted(matrix_files)  # Sort alphabetically
+    
+    def validate_parameters(self, parameters: Dict[str, Any]) -> tuple:
+        """Validate clustering parameters. Returns (is_valid, error_message)."""
+        matrix_name = parameters.get('matrix', '').strip()
+        if not matrix_name:
+            return False, "No matrix selected for clustering"
+        
+        clustering_method = parameters.get('clustering_method', '')
+        valid_methods = ['ward', 'complete', 'average', 'single']
+        if clustering_method not in valid_methods:
+            return False, f"Invalid clustering method. Must be one of: {valid_methods}"
+        
+        distance_metric = parameters.get('distance_metric', '')
+        valid_metrics = ['euclidean', 'correlation', 'cosine', 'manhattan']
+        if distance_metric not in valid_metrics:
+            return False, f"Invalid distance metric. Must be one of: {valid_metrics}"
+        
+        clustering_dimension = parameters.get('clustering_dimension', '')
+        valid_dimensions = ['Cluster Rows (Neurons)', 'Cluster Columns (Time Points)']
+        if clustering_dimension not in valid_dimensions:
+            return False, f"Invalid clustering dimension. Must be one of: {valid_dimensions}"
+        
+        # Note: output_name_prefix is auto-generated, so no validation needed
+        
+        return True, ""
+    
+    def generate_output_prefix(self, matrix_name: str) -> str:
+        """Generate output prefix: HAC + matrix suffix (e.g., HAC_norm01)."""
+        matrix_suffix = matrix_name.split('_')[-1] if '_' in matrix_name else matrix_name
+        return f"HAC_{matrix_suffix}"
+    
+    def generate_folder_name(self, clustering_method: str, distance_metric: str) -> str:
+        """Generate folder name: HAC + method + first 4 letters of metric (e.g., HAC_ward_eucl)."""
+        metric_abbrev = distance_metric[:4]  # First 4 letters
+        return f"HAC_{clustering_method}_{metric_abbrev}"
+    
+    def perform_hierarchical_clustering(self, matrix_data: np.ndarray, method: str, 
+                                      metric: str, cluster_rows: bool) -> tuple:
+        """Perform hierarchical clustering and return linkage matrix and indices.
+        
+        Args:
+            matrix_data: 2D numpy array
+            method: Clustering method ('ward', 'complete', 'average', 'single')
+            metric: Distance metric ('euclidean', 'correlation', 'cosine', 'manhattan')
+            cluster_rows: If True, cluster rows; if False, cluster columns
+            
+        Returns:
+            tuple: (linkage_matrix, cluster_indices)
+        """
+        from scipy.cluster.hierarchy import linkage
+        from scipy.spatial.distance import pdist
+        
+        # Prepare data for clustering
+        if cluster_rows:
+            # Cluster rows (neurons) - each row is a data point
+            data_for_clustering = matrix_data
+        else:
+            # Cluster columns (time points) - transpose so each column becomes a row
+            data_for_clustering = matrix_data.T
+        
+        # Handle special case for ward method (only works with euclidean)
+        if method == 'ward' and metric != 'euclidean':
+            print(f"Warning: Ward clustering is incompatible with {metric} distance.")
+            print(f"Ward method requires Euclidean distance for proper variance calculations.")
+            print(f"Automatically switching to Euclidean distance.")
+            metric = 'euclidean'
+        
+        # Calculate pairwise distances
+        if metric == 'correlation':
+            # Use 1 - correlation as distance
+            distances = pdist(data_for_clustering, metric='correlation')
+        else:
+            distances = pdist(data_for_clustering, metric=metric)
+        
+        # Perform hierarchical clustering
+        linkage_matrix = linkage(distances, method=method)
+        
+        # Get the order of indices from the clustering
+        from scipy.cluster.hierarchy import leaves_list
+        cluster_indices = leaves_list(linkage_matrix)
+        
+        return linkage_matrix, cluster_indices
+    
+    def process_with_progress(self, parameters: Dict[str, Any] = None, 
+                            progress_callback: Callable[[float], None] = None) -> Dict[str, Any]:
+        """Process the matrix with hierarchical clustering."""
+        if parameters is None:
+            parameters = self.get_default_parameters()
+        
+        def update_progress(percent: float):
+            if progress_callback:
+                progress_callback(percent)
+        
+        try:
+            # Step 1: Validate parameters and matrix file (20%)
+            update_progress(20.0)
+            is_valid, error_msg = self.validate_parameters(parameters)
+            if not is_valid:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Parameter validation failed: {error_msg}'
+                }
+            
+            # Get parameters
+            matrix_name = parameters.get('matrix')
+            clustering_method = parameters.get('clustering_method', 'ward')
+            distance_metric = parameters.get('distance_metric', 'euclidean')
+            clustering_dimension = parameters.get('clustering_dimension', 'Cluster Rows (Neurons)')
+            dataset_name = parameters.get('dataset_name', 'unknown_dataset')
+            
+            # Generate output prefix and folder name
+            output_prefix = self.generate_output_prefix(matrix_name)
+            folder_name = self.generate_folder_name(clustering_method, distance_metric)
+            
+            # Determine if clustering rows or columns
+            cluster_rows = clustering_dimension == 'Cluster Rows (Neurons)'
+            
+            # Construct matrix file path
+            matrix_file_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", f"{matrix_name}.npy")
+            
+            # Validate matrix file exists
+            if not os.path.exists(matrix_file_path):
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Matrix file not found: {matrix_file_path}'
+                }
+            
+            # Step 2: Load matrix data (40%)
+            update_progress(40.0)
+            matrix_data = np.load(matrix_file_path)
+            
+            # Validate matrix is 2D
+            if len(matrix_data.shape) != 2:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Matrix must be 2D, got shape: {matrix_data.shape}'
+                }
+            
+            # Step 3: Prepare data for clustering (50%)
+            update_progress(50.0)
+            # Check for NaN values and handle them
+            if np.any(np.isnan(matrix_data)):
+                nan_count = np.sum(np.isnan(matrix_data))
+                print(f"Warning: {nan_count} NaN values detected in matrix. These will affect clustering results.")
+            
+            # Step 4: Perform hierarchical clustering (70%)
+            update_progress(70.0)
+            try:
+                linkage_matrix, cluster_indices = self.perform_hierarchical_clustering(
+                    matrix_data, clustering_method, distance_metric, cluster_rows
+                )
+            except Exception as e:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Clustering failed: {str(e)}'
+                }
+            
+            # Step 5: Save clustering results (90%)
+            update_progress(90.0)
+            # Create output directory with folder structure: data/datasets/{dataset}/processed/matrices/{HAC_method_metric}/
+            base_matrices_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+            output_dir = os.path.join(base_matrices_dir, folder_name)
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Generate output filenames
+            linkage_output_path = os.path.join(output_dir, f"{output_prefix}_linkage_matrix.npy")
+            indices_output_path = os.path.join(output_dir, f"{output_prefix}_cluster_indices.csv")
+            sorted_matrix_output_path = os.path.join(output_dir, f"{output_prefix}_sorted_matrix.npy")
+            
+            # Save linkage matrix
+            np.save(linkage_output_path, linkage_matrix)
+            
+            # Save cluster indices
+            dimension_label = "row_indices" if cluster_rows else "column_indices"
+            indices_df = pd.DataFrame({dimension_label: cluster_indices})
+            indices_df.to_csv(indices_output_path, index=False)
+            
+            # Create and save sorted matrix
+            if cluster_rows:
+                sorted_matrix = matrix_data[cluster_indices, :]
+            else:
+                sorted_matrix = matrix_data[:, cluster_indices]
+            
+            np.save(sorted_matrix_output_path, sorted_matrix)
+            
+            # Calculate statistics
+            statistics = {
+                'input_matrix_shape': matrix_data.shape,
+                'clustering_method': clustering_method,
+                'distance_metric': distance_metric,
+                'clustering_dimension': clustering_dimension,
+                'cluster_rows': cluster_rows,
+                'n_clusters_performed': len(cluster_indices),
+                'linkage_matrix_shape': linkage_matrix.shape,
+                'output_prefix': output_prefix,
+                'output_folder': folder_name,
+                'output_files': {
+                    'linkage_matrix': linkage_output_path,
+                    'cluster_indices': indices_output_path,
+                    'sorted_matrix': sorted_matrix_output_path
+                },
+                'matrix_stats': {
+                    'mean': float(np.nanmean(matrix_data)),
+                    'std': float(np.nanstd(matrix_data)),
+                    'min': float(np.nanmin(matrix_data)),
+                    'max': float(np.nanmax(matrix_data)),
+                    'nan_count': int(np.sum(np.isnan(matrix_data)))
+                }
+            }
+            
+            # Step 6: Completed (100%)
+            update_progress(100.0)
+            
+            return {
+                'success': True,
+                'data': {
+                    'linkage_matrix': linkage_matrix,
+                    'cluster_indices': cluster_indices,
+                    'sorted_matrix': sorted_matrix
+                },
+                'statistics': statistics,
+                'output_path': output_dir,
+                'message': f'Hierarchical clustering completed successfully. Files saved to: {output_dir}'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'data': None,
+                'statistics': None,
+                'message': f'Hierarchical clustering failed: {str(e)}'
+            }
+
+
 class DataProcessingManager:
     """Manager class for coordinating different data processors."""
     
@@ -1278,7 +1562,8 @@ class DataProcessingManager:
             'Matrix Modification': MatrixModificationProcessor(),
             'Data Annotation': DataAnnotationProcessor(),
             'Indexing': IndexingProcessor(),
-            'Ruzicka Similarity': RuzickaSimilarityProcessor()
+            'Ruzicka Similarity': RuzickaSimilarityProcessor(),
+            'Hierarchical Clustering': HierarchicalClusteringProcessor()
         }
     
     def get_processor(self, processor_name: str) -> Optional[BaseProcessor]:

@@ -564,6 +564,98 @@ class DataProcessingGUI:
             suggested_name = f"Ruzicka Matrix_{matrix_suffix}"
             self.param_vars['matrix_name'].set(suggested_name)
     
+    def create_hierarchical_clustering_params(self):
+        """Create parameter widgets for Hierarchical Clustering."""
+        # Clear existing params
+        for widget in self.params_frame.winfo_children():
+            widget.destroy()
+        self.param_vars.clear()
+        
+        # Matrix dropdown (will be populated based on selected dataset)
+        ttk.Label(self.params_frame, text="Matrix:").grid(row=0, column=0, sticky="w", padx=5)
+        self.param_vars['matrix'] = tk.StringVar()
+        self.hierarchical_matrix_combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars['matrix'],
+                                                     values=[], state="readonly", width=20)
+        self.hierarchical_matrix_combo.grid(row=0, column=1, padx=5)
+        self.hierarchical_matrix_combo.bind('<<ComboboxSelected>>', self.on_hierarchical_matrix_selection_change)
+        
+        # Clustering Method dropdown
+        ttk.Label(self.params_frame, text="Clustering Method:").grid(row=1, column=0, sticky="w", padx=5)
+        self.param_vars['clustering_method'] = tk.StringVar(value='ward')
+        clustering_method_combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars['clustering_method'],
+                                             values=['ward', 'complete', 'average', 'single'], 
+                                             state="readonly", width=20)
+        clustering_method_combo.grid(row=1, column=1, padx=5)
+        
+        # Distance Metric dropdown
+        ttk.Label(self.params_frame, text="Distance Metric:").grid(row=2, column=0, sticky="w", padx=5)
+        self.param_vars['distance_metric'] = tk.StringVar(value='euclidean')
+        distance_metric_combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars['distance_metric'],
+                                           values=['euclidean', 'correlation', 'cosine', 'manhattan'], 
+                                           state="readonly", width=20)
+        distance_metric_combo.grid(row=2, column=1, padx=5)
+        
+        # Add help label for Ward method compatibility
+        ward_help_label = ttk.Label(self.params_frame, text="(Note: Ward method auto-switches to Euclidean if needed)", 
+                                   font=("Arial", 8), foreground="gray")
+        ward_help_label.grid(row=2, column=2, sticky="w", padx=5)
+        
+        # Clustering Dimension dropdown
+        ttk.Label(self.params_frame, text="Clustering Dimension:").grid(row=3, column=0, sticky="w", padx=5)
+        self.param_vars['clustering_dimension'] = tk.StringVar(value='Cluster Rows (Neurons)')
+        clustering_dimension_combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars['clustering_dimension'],
+                                                 values=['Cluster Rows (Neurons)', 'Cluster Columns (Time Points)'], 
+                                                 state="readonly", width=20)
+        clustering_dimension_combo.grid(row=3, column=1, padx=5)
+        
+        # Output Name Prefix (auto-generated, read-only display)
+        ttk.Label(self.params_frame, text="Output Name Prefix:").grid(row=4, column=0, sticky="w", padx=5)
+        self.param_vars['output_name_prefix'] = tk.StringVar(value='HAC')
+        prefix_entry = ttk.Entry(self.params_frame, textvariable=self.param_vars['output_name_prefix'], 
+                                width=20, state="readonly")
+        prefix_entry.grid(row=4, column=1, padx=5)
+        
+        # Update matrix dropdown based on currently selected dataset
+        self.update_hierarchical_matrix_dropdown()
+    
+    def update_hierarchical_matrix_dropdown(self):
+        """Update matrix dropdown based on selected dataset for Hierarchical Clustering."""
+        if not self.selected_dataset:
+            self.hierarchical_matrix_combo['values'] = []
+            return
+        
+        # Get available matrices for the selected dataset
+        from src.data_processing.processors import DataProcessingManager
+        manager = DataProcessingManager()
+        hierarchical_processor = manager.get_processor("Hierarchical Clustering")
+        
+        if hierarchical_processor:
+            available_matrices = hierarchical_processor.find_matrix_files(self.selected_dataset.name)
+            self.hierarchical_matrix_combo['values'] = available_matrices
+            
+            # Clear current selection if no matrices available
+            if not available_matrices:
+                self.param_vars['matrix'].set('')
+            elif len(available_matrices) == 1:
+                # Auto-select if only one matrix available
+                self.param_vars['matrix'].set(available_matrices[0])
+                self.on_hierarchical_matrix_selection_change()
+            else:
+                # Prefer normalized matrices if available
+                preferred_matrices = [m for m in available_matrices if 'norm01' in m or 'zscore' in m]
+                if preferred_matrices:
+                    self.param_vars['matrix'].set(preferred_matrices[0])
+                    self.on_hierarchical_matrix_selection_change()
+    
+    def on_hierarchical_matrix_selection_change(self, event=None):
+        """Handle matrix selection change for Hierarchical Clustering."""
+        matrix_name = self.param_vars['matrix'].get()
+        if matrix_name:
+            # Update output prefix to HAC + matrix suffix (e.g., HAC_norm01)
+            matrix_suffix = matrix_name.split('_')[-1] if '_' in matrix_name else matrix_name
+            suggested_prefix = f"HAC_{matrix_suffix}"
+            self.param_vars['output_name_prefix'].set(suggested_prefix)
+    
     def update_default_browse_path(self):
         """Update the default browse path based on selected dataset."""
         if hasattr(self, 'selected_dataset') and self.selected_dataset:
@@ -712,6 +804,9 @@ class DataProcessingGUI:
         elif processing_type == "Ruzicka Similarity":
             self.create_ruzicka_similarity_params()
             self.preview_button.config(text="Preview Matrix")
+        elif processing_type == "Hierarchical Clustering":
+            self.create_hierarchical_clustering_params()
+            self.preview_button.config(text="Preview Clustering")
         else:
             # Fallback to Matrix Extraction for unknown types
             self.create_matrix_extraction_params()
@@ -760,6 +855,9 @@ class DataProcessingGUI:
                 # Update matrix dropdown if Ruzicka Similarity is selected
                 elif self.processing_type_var.get() == "Ruzicka Similarity":
                     self.update_ruzicka_matrix_dropdown()
+                # Update matrix dropdown if Hierarchical Clustering is selected
+                elif self.processing_type_var.get() == "Hierarchical Clustering":
+                    self.update_hierarchical_matrix_dropdown()
     
     def start_processing(self):
         """Start a processing job."""
@@ -842,6 +940,13 @@ class DataProcessingGUI:
                 messagebox.showwarning("Missing Matrix Name", "Please provide a name for the similarity matrix.")
                 return
         
+        # Additional validation for Hierarchical Clustering
+        if processing_type == "Hierarchical Clustering":
+            matrix_selected = self.param_vars.get('matrix', tk.StringVar()).get()
+            if not matrix_selected:
+                messagebox.showwarning("No Matrix Selected", "Please select a matrix for hierarchical clustering.")
+                return
+        
         try:
             # Collect parameters
             parameters = {}
@@ -885,6 +990,12 @@ class DataProcessingGUI:
                 # Generate job name for Ruzicka Similarity
                 matrix_name = parameters.get('matrix_name', 'Ruzicka Matrix')
                 job_name = f"Ruzicka_Similarity_{matrix_name.replace(' ', '_')}"
+            elif processing_type == "Hierarchical Clustering":
+                # Generate job name for Hierarchical Clustering
+                output_prefix = parameters.get('output_name_prefix', 'HAC')
+                clustering_method = parameters.get('clustering_method', 'ward')
+                distance_metric = parameters.get('distance_metric', 'euclidean')[:4]  # First 4 letters
+                job_name = f"HAC_{output_prefix}_{clustering_method}_{distance_metric}"
             else:
                 # Generate job name from matrix name for other processing types
                 matrix_name = parameters.get('matrix_name', 'extracted_matrix')
