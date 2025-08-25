@@ -925,6 +925,19 @@ class FigureGenerationGUI:
             'frame': matrix_frame,
             'config': mode_config['required_files'][0]
         }
+        
+        # Aesthetic toggle checkbox
+        aesthetic_frame = ttk.Frame(self.file_requirements_container)
+        aesthetic_frame.pack(fill="x", pady=2)
+        
+        self.matrix_show_aesthetics = tk.BooleanVar(value=True)  # Default is all elements present
+        aesthetic_checkbox = ttk.Checkbutton(
+            aesthetic_frame, 
+            text="Show ticks, labels & title", 
+            variable=self.matrix_show_aesthetics,
+            command=self.on_matrix_aesthetic_toggle
+        )
+        aesthetic_checkbox.pack(anchor="w", padx=5)
     
     def create_tuning_curve_file_widgets(self, mode_config):
         """Create TuningCurve-specific file selection widgets."""
@@ -1405,6 +1418,12 @@ class FigureGenerationGUI:
         # Update the figure when sorting options change
         self.update_inspection_figure()
     
+    def on_matrix_aesthetic_toggle(self):
+        """Handle changes in matrix aesthetic toggle checkbox."""
+        # Update the figure when aesthetic toggle changes
+        if hasattr(self, 'selected_mode') and self.selected_mode == "MatrixVisualization":
+            self.update_inspection_figure()
+    
     def apply_sorting_to_matrix(self, matrix, row_labels=None, column_labels=None):
         """Apply sorting to the matrix based on current sorting settings."""
         if matrix is None:
@@ -1851,48 +1870,60 @@ class FigureGenerationGUI:
             colormap = self.matrix_colormap.get()
             im = self.inspection_ax.imshow(matrix_data, cmap=colormap, aspect='equal')
             
-            # Set title
-            dataset_name = self.selected_dataset.name
-            matrix_filename = os.path.basename(matrix_file)
-            matrix_name = os.path.splitext(matrix_filename)[0]
-            figure_title = f"{dataset_name} {matrix_name}"
-            self.inspection_ax.set_title(figure_title)
-            
-            # Set axis labels
-            self.inspection_ax.set_xlabel("Columns")
-            self.inspection_ax.set_ylabel("Rows")
-            
-            # Set tick labels to show actual matrix dimensions
-            # For large matrices, show fewer ticks to avoid overcrowding
-            max_ticks = 10  # Maximum number of ticks to show
-            
-            # Handle row ticks (y-axis)
-            if matrix_data.shape[0] <= max_ticks:
-                # Show all ticks for small matrices
-                y_positions = list(range(matrix_data.shape[0]))
-                y_labels = [str(i + 1) for i in range(matrix_data.shape[0])]
+            # Apply aesthetic settings based on checkbox
+            show_aesthetics = getattr(self, 'matrix_show_aesthetics', None)
+            if show_aesthetics is None or show_aesthetics.get():
+                # Show all aesthetic elements (default behavior)
+                
+                # Set title
+                dataset_name = self.selected_dataset.name
+                matrix_filename = os.path.basename(matrix_file)
+                matrix_name = os.path.splitext(matrix_filename)[0]
+                figure_title = f"{dataset_name} {matrix_name}"
+                self.inspection_ax.set_title(figure_title)
+                
+                # Set axis labels
+                self.inspection_ax.set_xlabel("Columns")
+                self.inspection_ax.set_ylabel("Rows")
+                
+                # Set tick labels to show actual matrix dimensions
+                # For large matrices, show fewer ticks to avoid overcrowding
+                max_ticks = 10  # Maximum number of ticks to show
+                
+                # Handle row ticks (y-axis)
+                if matrix_data.shape[0] <= max_ticks:
+                    # Show all ticks for small matrices
+                    y_positions = list(range(matrix_data.shape[0]))
+                    y_labels = [str(i + 1) for i in range(matrix_data.shape[0])]
+                else:
+                    # Show evenly spaced ticks for large matrices
+                    step = (matrix_data.shape[0] - 1) / (max_ticks - 1)
+                    y_positions = [int(round(i * step)) for i in range(max_ticks)]
+                    y_labels = [str(pos + 1) for pos in y_positions]
+                
+                self.inspection_ax.set_yticks(y_positions)
+                self.inspection_ax.set_yticklabels(y_labels)
+                
+                # Handle column ticks (x-axis)
+                if matrix_data.shape[1] <= max_ticks:
+                    # Show all ticks for small matrices
+                    x_positions = list(range(matrix_data.shape[1]))
+                    x_labels = [str(i + 1) for i in range(matrix_data.shape[1])]
+                else:
+                    # Show evenly spaced ticks for large matrices
+                    step = (matrix_data.shape[1] - 1) / (max_ticks - 1)
+                    x_positions = [int(round(i * step)) for i in range(max_ticks)]
+                    x_labels = [str(pos + 1) for pos in x_positions]
+                
+                self.inspection_ax.set_xticks(x_positions)
+                self.inspection_ax.set_xticklabels(x_labels, rotation=45)
             else:
-                # Show evenly spaced ticks for large matrices
-                step = (matrix_data.shape[0] - 1) / (max_ticks - 1)
-                y_positions = [int(round(i * step)) for i in range(max_ticks)]
-                y_labels = [str(pos + 1) for pos in y_positions]
-            
-            self.inspection_ax.set_yticks(y_positions)
-            self.inspection_ax.set_yticklabels(y_labels)
-            
-            # Handle column ticks (x-axis)
-            if matrix_data.shape[1] <= max_ticks:
-                # Show all ticks for small matrices
-                x_positions = list(range(matrix_data.shape[1]))
-                x_labels = [str(i + 1) for i in range(matrix_data.shape[1])]
-            else:
-                # Show evenly spaced ticks for large matrices
-                step = (matrix_data.shape[1] - 1) / (max_ticks - 1)
-                x_positions = [int(round(i * step)) for i in range(max_ticks)]
-                x_labels = [str(pos + 1) for pos in x_positions]
-            
-            self.inspection_ax.set_xticks(x_positions)
-            self.inspection_ax.set_xticklabels(x_labels, rotation=45)
+                # Hide aesthetic elements for clean look
+                self.inspection_ax.set_title("")
+                self.inspection_ax.set_xlabel("")
+                self.inspection_ax.set_ylabel("")
+                self.inspection_ax.set_xticks([])
+                self.inspection_ax.set_yticks([])
             
         except Exception as e:
             self.inspection_ax.text(0.5, 0.5, f'Error generating Matrix Visualization:\n{str(e)}', 
