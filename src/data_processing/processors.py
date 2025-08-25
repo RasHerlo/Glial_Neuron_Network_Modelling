@@ -1347,6 +1347,97 @@ class HierarchicalClusteringProcessor(BaseProcessor):
         metric_abbrev = distance_metric[:4]  # First 4 letters
         return f"HAC_{clustering_method}_{metric_abbrev}"
     
+    def convert_clustering_to_ranking(self, cluster_indices: np.ndarray) -> np.ndarray:
+        """Convert hierarchical clustering indices to ranking format for Figure Generation GUI.
+        
+        Hierarchical clustering returns positional indices [2, 0, 1] meaning:
+        - Item at position 2 should be first
+        - Item at position 0 should be second  
+        - Item at position 1 should be third
+        
+        Figure Generation GUI expects ranking format [2, 3, 1] meaning:
+        - Item at position 0 gets rank 2
+        - Item at position 1 gets rank 3
+        - Item at position 2 gets rank 1
+        
+        Args:
+            cluster_indices: Array of positional indices from hierarchical clustering
+            
+        Returns:
+            Array of ranking values compatible with Figure Generation GUI
+        """
+        ranking = np.zeros(len(cluster_indices), dtype=int)
+        for rank, original_pos in enumerate(cluster_indices):
+            ranking[original_pos] = rank + 1  # +1 because rankings start at 1
+        return ranking
+    
+    def add_clustering_to_labels_file(self, dataset_name: str, folder_name: str, 
+                                    cluster_indices: np.ndarray, cluster_rows: bool):
+        """Add clustering indices as a column to the relevant labels_and_indices file.
+        
+        Args:
+            dataset_name: Name of the dataset
+            folder_name: Name of the clustering folder (e.g., HAC_ward_eucl)
+            cluster_indices: Array of clustering indices (will be converted to ranking format)
+            cluster_rows: If True, update row labels file; if False, update column labels file
+        """
+        # Determine which labels file to update
+        if cluster_rows:
+            labels_filename = "Raster_row_labels_and_indices.csv"
+        else:
+            labels_filename = "Raster_column_labels_and_indices.csv"
+        
+        labels_file_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", labels_filename)
+        
+        try:
+            # Convert clustering indices to ranking format for GUI compatibility
+            ranking_indices = self.convert_clustering_to_ranking(cluster_indices)
+            
+            # Check if labels file exists
+            if os.path.exists(labels_file_path):
+                # Load existing labels file
+                labels_df = pd.read_csv(labels_file_path)
+                
+                # Verify the number of indices matches the file length
+                if len(ranking_indices) != len(labels_df):
+                    print(f"Warning: Clustering indices length ({len(ranking_indices)}) doesn't match labels file length ({len(labels_df)})")
+                    return
+                
+                # Add the clustering column (use folder name as column name)
+                labels_df[folder_name] = ranking_indices
+                
+                # Save the updated file
+                labels_df.to_csv(labels_file_path, index=False)
+                print(f"Added clustering column '{folder_name}' to {labels_filename}")
+                
+            else:
+                # Create new labels file if it doesn't exist
+                print(f"Labels file {labels_filename} not found. Creating new file.")
+                
+                if cluster_rows:
+                    # Create row labels file
+                    labels_df = pd.DataFrame({
+                        'row_labels': [f'Neuron_{i:04d}' for i in range(len(ranking_indices))],
+                        folder_name: ranking_indices
+                    })
+                else:
+                    # Create column labels file
+                    labels_df = pd.DataFrame({
+                        'column_labels': [f'Time_{i:04d}' for i in range(len(ranking_indices))],
+                        folder_name: ranking_indices
+                    })
+                
+                # Ensure the directory exists
+                os.makedirs(os.path.dirname(labels_file_path), exist_ok=True)
+                
+                # Save the new file
+                labels_df.to_csv(labels_file_path, index=False)
+                print(f"Created new {labels_filename} with clustering column '{folder_name}'")
+                
+        except Exception as e:
+            print(f"Error updating labels file {labels_filename}: {str(e)}")
+            # Don't fail the entire clustering process if labels file update fails
+    
     def perform_hierarchical_clustering(self, matrix_data: np.ndarray, method: str, 
                                       metric: str, cluster_rows: bool) -> tuple:
         """Perform hierarchical clustering and return linkage matrix and indices.
@@ -1504,7 +1595,11 @@ class HierarchicalClusteringProcessor(BaseProcessor):
             
             np.save(sorted_matrix_output_path, sorted_matrix)
             
+            # Add clustering indices to the relevant labels_and_indices file
+            self.add_clustering_to_labels_file(dataset_name, folder_name, cluster_indices, cluster_rows)
+            
             # Calculate statistics
+            labels_file = "Raster_row_labels_and_indices.csv" if cluster_rows else "Raster_column_labels_and_indices.csv"
             statistics = {
                 'input_matrix_shape': matrix_data.shape,
                 'clustering_method': clustering_method,
@@ -1515,6 +1610,8 @@ class HierarchicalClusteringProcessor(BaseProcessor):
                 'linkage_matrix_shape': linkage_matrix.shape,
                 'output_prefix': output_prefix,
                 'output_folder': folder_name,
+                'labels_file_updated': labels_file,
+                'clustering_column_name': folder_name,
                 'output_files': {
                     'linkage_matrix': linkage_output_path,
                     'cluster_indices': indices_output_path,
