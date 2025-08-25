@@ -22,6 +22,7 @@ try:
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     from matplotlib.figure import Figure
     import seaborn as sns
+    from scipy.cluster.hierarchy import dendrogram
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
@@ -1579,6 +1580,74 @@ class FigureGenerationGUI:
             print(f"Error loading sorting vector '{column_name}' for {vector_type}: {e}")
             return None
 
+    def load_linkage_matrix(self, sorting_vector_name):
+        """Load the linkage matrix for the given HAC sorting vector."""
+        if not self.selected_dataset or not sorting_vector_name:
+            return None
+            
+        if not sorting_vector_name.startswith('HAC'):
+            return None
+            
+        try:
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            linkage_path = os.path.join(dataset_path, "processed", "matrices", 
+                                      sorting_vector_name, "HAC_norm01_linkage_matrix.npy")
+            
+            if not os.path.exists(linkage_path):
+                raise FileNotFoundError(f"Linkage matrix not found: {linkage_path}")
+            
+            # Load the linkage matrix
+            linkage_matrix = np.load(linkage_path)
+            
+            # Validate linkage matrix format
+            if linkage_matrix.ndim != 2 or linkage_matrix.shape[1] != 4:
+                raise ValueError(f"Invalid linkage matrix format. Expected (n, 4), got {linkage_matrix.shape}")
+                
+            return linkage_matrix
+            
+        except Exception as e:
+            print(f"Error loading linkage matrix for '{sorting_vector_name}': {e}")
+            return None
+
+    def create_dendrogram_subplot(self, linkage_matrix, matrix_rows, invert_order=False):
+        """Create dendrogram subplot with proper alignment to matrix rows."""
+        try:
+            # Create dendrogram subplot
+            # Position: left=0.04 (0.5/12.5), bottom=0.167, width=0.512 (6.4/12.5, 20% reduction), height=0.667
+            dendro_ax = self.inspection_fig.add_axes([0.04, 0.167, 0.512, 0.667])
+            
+            # Generate dendrogram without labels
+            dendro_result = dendrogram(
+                linkage_matrix,
+                ax=dendro_ax,
+                orientation='right',  # Leaves on the right side
+                leaf_rotation=0,      # Keep labels horizontal
+                no_labels=True,       # Remove neuron indices
+                color_threshold=0,    # Use default coloring
+                above_threshold_color='black'
+            )
+            
+            # Invert the x-axis so leaves are on the right (higher linkage distances on left)
+            dendro_ax.invert_xaxis()
+            
+            # Invert the dendrogram if requested (for descending sort order)
+            if invert_order:
+                dendro_ax.invert_yaxis()
+            
+            # Set axis labels and title
+            dendro_ax.set_xlabel('Linkage Distance')
+            dendro_ax.set_ylabel('Rows')
+            dendro_ax.set_title('Hierarchical Clustering Dendrogram')
+            
+            # Store dendrogram result for future threshold functionality
+            self.current_dendrogram_result = dendro_result
+            
+            return dendro_ax
+            
+        except Exception as e:
+            print(f"Error creating dendrogram subplot: {e}")
+            return None
+
     
     def previous_neuron(self):
         """Navigate to previous neuron."""
@@ -1874,6 +1943,10 @@ class FigureGenerationGUI:
         try:
             # Check if matrix is selected
             if 'matrix' not in self.file_selection_widgets or not self.file_selection_widgets['matrix']['var'].get():
+                # Create a temporary axis for error display if it doesn't exist
+                if not hasattr(self, 'inspection_ax') or self.inspection_ax is None:
+                    self.inspection_fig.clear()
+                    self.inspection_ax = self.inspection_fig.add_axes([0.56, 0.167, 0.32, 0.667])
                 self.inspection_ax.text(0.5, 0.5, 'Please select a Matrix file', 
                                       ha='center', va='center', transform=self.inspection_ax.transAxes,
                                       fontsize=12, alpha=0.7)
@@ -1889,6 +1962,10 @@ class FigureGenerationGUI:
             
             # Check if matrix is 2D
             if matrix_data.ndim != 2:
+                # Create a temporary axis for error display if it doesn't exist
+                if not hasattr(self, 'inspection_ax') or self.inspection_ax is None:
+                    self.inspection_fig.clear()
+                    self.inspection_ax = self.inspection_fig.add_axes([0.56, 0.167, 0.32, 0.667])
                 self.inspection_ax.text(0.5, 0.5, f'Matrix must be 2D. Current shape: {matrix_data.shape}', 
                                       ha='center', va='center', transform=self.inspection_ax.transAxes,
                                       fontsize=12, color='red')
@@ -1904,8 +1981,46 @@ class FigureGenerationGUI:
             # Clear the figure
             self.inspection_fig.clear()
             
-            # Create fixed-size subplot: 4x4 inches, starting at 8.5 inches from left (centered in wider space)
-            # Figure is 12.5 inches wide, 6 inches tall
+            # Check if dendrogram toggle is active and conditions are met
+            show_dendrogram = (hasattr(self, 'show_dendrogram_var') and 
+                             self.show_dendrogram_var.get() and
+                             hasattr(self, 'sort_rows_var') and
+                             self.sort_rows_var.get() and
+                             hasattr(self, 'row_sorting_vector_var') and
+                             self.row_sorting_vector_var.get().startswith('HAC'))
+            
+            dendro_ax = None
+            if show_dendrogram:
+                # Try to create dendrogram
+                row_sorting_vector = self.row_sorting_vector_var.get()
+                linkage_matrix = self.load_linkage_matrix(row_sorting_vector)
+                
+                if linkage_matrix is not None:
+                    # Determine if we should invert the dendrogram order
+                    invert_order = (hasattr(self, 'row_sort_ascending_var') and 
+                                  not self.row_sort_ascending_var.get())
+                    
+                    # Create dendrogram subplot
+                    dendro_ax = self.create_dendrogram_subplot(linkage_matrix, matrix_data.shape[0], invert_order)
+                    
+                    if dendro_ax is None:
+                        # Failed to create dendrogram, show error in dendrogram area
+                        dendro_ax = self.inspection_fig.add_axes([0.04, 0.167, 0.64, 0.667])
+                        dendro_ax.text(0.5, 0.5, f'Error creating dendrogram\nfor {row_sorting_vector}', 
+                                     ha='center', va='center', transform=dendro_ax.transAxes,
+                                     fontsize=10, color='red')
+                        dendro_ax.set_xticks([])
+                        dendro_ax.set_yticks([])
+                else:
+                    # Linkage matrix not found, show error in dendrogram area
+                    dendro_ax = self.inspection_fig.add_axes([0.04, 0.167, 0.64, 0.667])
+                    dendro_ax.text(0.5, 0.5, f'Linkage matrix not found\nfor {row_sorting_vector}', 
+                                 ha='center', va='center', transform=dendro_ax.transAxes,
+                                 fontsize=10, color='red')
+                    dendro_ax.set_xticks([])
+                    dendro_ax.set_yticks([])
+            
+            # Create matrix subplot
             # Position: left=0.56 (7/12.5), bottom=0.167 (1/6), width=0.32 (4/12.5), height=0.667 (4/6)
             self.inspection_ax = self.inspection_fig.add_axes([0.56, 0.167, 0.32, 0.667])
             
@@ -1969,6 +2084,10 @@ class FigureGenerationGUI:
                 self.inspection_ax.set_yticks([])
             
         except Exception as e:
+            # Create a temporary axis for error display if it doesn't exist
+            if not hasattr(self, 'inspection_ax') or self.inspection_ax is None:
+                self.inspection_fig.clear()
+                self.inspection_ax = self.inspection_fig.add_axes([0.56, 0.167, 0.32, 0.667])
             self.inspection_ax.text(0.5, 0.5, f'Error generating Matrix Visualization:\n{str(e)}', 
                                   ha='center', va='center', transform=self.inspection_ax.transAxes,
                                   fontsize=10, color='red')
