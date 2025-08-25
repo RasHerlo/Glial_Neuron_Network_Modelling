@@ -1259,27 +1259,44 @@ class FigureGenerationGUI:
     
     def create_custom_mode_controls(self, mode, mode_config):
         """Create controls for custom modes based on their configuration."""
-        # Set frame title based on mode
         if mode == "MatrixVisualization":
-            frame_title = "Matrix Controls"
+            # Create a horizontal container for two control sections
+            container_frame = ttk.Frame(self.mode_controls_frame)
+            container_frame.pack(fill="x", pady=5)
+            
+            # Left side - Matrix Controls (half width)
+            matrix_frame = ttk.LabelFrame(container_frame, text="Matrix Controls", padding=5)
+            matrix_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
+            
+            # Right side - Dendrogram Controls (half width)
+            dendro_frame = ttk.LabelFrame(container_frame, text="Dendrogram Controls", padding=5)
+            dendro_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
+            
+            # Create controls for both sections
+            self.create_matrix_visualization_controls(matrix_frame, mode_config)
+            self.create_dendrogram_controls(dendro_frame)
         else:
-            frame_title = f"{mode} Controls"
-        
-        frame = ttk.LabelFrame(self.mode_controls_frame, text=frame_title, padding=5)
-        frame.pack(fill="x", pady=5)
-        
-        if mode == "RasterPlot":
-            self.create_rasterplot_controls(frame, mode_config)
-        elif mode == "MatrixVisualization":
-            self.create_matrix_visualization_controls(frame, mode_config)
-        elif mode == "TuningCurve":
-            self.create_tuning_curve_controls(frame, mode_config)
-        else:
-            # Placeholder for other custom modes
-            placeholder_label = ttk.Label(frame, 
-                                        text=f"Custom controls for '{mode}' will be implemented based on mode configuration.",
-                                        font=("Arial", 10), foreground="gray")
-            placeholder_label.pack(pady=10)
+            # For other modes, use the original single-frame layout
+            if mode == "RasterPlot":
+                frame_title = "RasterPlot Controls"
+            elif mode == "TuningCurve":
+                frame_title = "TuningCurve Controls"
+            else:
+                frame_title = f"{mode} Controls"
+            
+            frame = ttk.LabelFrame(self.mode_controls_frame, text=frame_title, padding=5)
+            frame.pack(fill="x", pady=5)
+            
+            if mode == "RasterPlot":
+                self.create_rasterplot_controls(frame, mode_config)
+            elif mode == "TuningCurve":
+                self.create_tuning_curve_controls(frame, mode_config)
+            else:
+                # Placeholder for other custom modes
+                placeholder_label = ttk.Label(frame, 
+                                            text=f"Custom controls for '{mode}' will be implemented based on mode configuration.",
+                                            font=("Arial", 10), foreground="gray")
+                placeholder_label.pack(pady=10)
     
     def create_rasterplot_controls(self, parent_frame, mode_config):
         """Create RasterPlot-specific controls."""
@@ -1304,6 +1321,18 @@ class FigureGenerationGUI:
                                     values=mode_config['controls']['colormap'], state="readonly", width=15)
         colormap_combo.grid(row=0, column=1, padx=5, pady=2)
         colormap_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
+
+    def create_dendrogram_controls(self, parent_frame):
+        """Create Dendrogram-specific controls."""
+        # Initialize dendrogram control variables
+        self.dendrogram_log_axis = tk.BooleanVar(value=False)
+        
+        # Log/Lin X-axis toggle
+        ttk.Label(parent_frame, text="Log/Lin X-axis:").grid(row=0, column=0, sticky="w", padx=5)
+        log_axis_checkbox = ttk.Checkbutton(parent_frame, text="Logarithmic", 
+                                          variable=self.dendrogram_log_axis,
+                                          command=self.on_dendrogram_log_axis_changed)
+        log_axis_checkbox.grid(row=0, column=1, sticky="w", padx=5, pady=2)
     
     def create_tuning_curve_controls(self, parent_frame, mode_config):
         """Create TuningCurve-specific controls."""
@@ -1463,6 +1492,13 @@ class FigureGenerationGUI:
         """Handle changes in matrix aesthetic toggle checkbox."""
         # Update the figure when aesthetic toggle changes
         if hasattr(self, 'selected_mode') and self.selected_mode == "MatrixVisualization":
+            self.update_inspection_figure()
+    
+    def on_dendrogram_log_axis_changed(self):
+        """Handle changes in dendrogram log/linear axis toggle."""
+        # Update the figure when log axis toggle changes
+        if (hasattr(self, 'selected_mode') and self.selected_mode == "MatrixVisualization" and
+            hasattr(self, 'show_dendrogram_var') and self.show_dendrogram_var.get()):
             self.update_inspection_figure()
     
     def apply_sorting_to_matrix(self, matrix, row_labels=None, column_labels=None):
@@ -1630,12 +1666,39 @@ class FigureGenerationGUI:
             # Invert the x-axis so leaves are on the right (higher linkage distances on left)
             dendro_ax.invert_xaxis()
             
+            # Apply logarithmic scaling if enabled
+            if hasattr(self, 'dendrogram_log_axis') and self.dendrogram_log_axis.get():
+                # First, get the current axis limits
+                xlim = dendro_ax.get_xlim()
+                
+                # Since we inverted the x-axis, xlim[0] is the max value and xlim[1] is the min value
+                x_max = xlim[0]  # This is actually the maximum linkage distance
+                x_min = xlim[1]  # This is actually the minimum linkage distance (usually 0)
+                
+                # Ensure both limits are positive for log scale
+                # For dendrograms, minimum distance is usually 0, so we need a small positive value
+                if x_min <= 0:
+                    x_min = max(1e-10, x_max * 1e-6)  # Set to a small fraction of the max value
+                
+                if x_max <= 0:
+                    x_max = 1.0  # Fallback if somehow max is also non-positive
+                
+                # Set the corrected limits BEFORE applying log scale
+                # Remember: since axis is inverted, left=max, right=min
+                dendro_ax.set_xlim(left=x_max, right=x_min)
+                
+                # Now it's safe to apply log scale
+                dendro_ax.set_xscale('log')
+            else:
+                dendro_ax.set_xscale('linear')
+            
             # Invert the dendrogram if requested (for descending sort order)
             if invert_order:
                 dendro_ax.invert_yaxis()
             
             # Set axis labels and title
-            dendro_ax.set_xlabel('Linkage Distance')
+            scale_type = "Log" if (hasattr(self, 'dendrogram_log_axis') and self.dendrogram_log_axis.get()) else "Linear"
+            dendro_ax.set_xlabel(f'Linkage Distance ({scale_type})')
             dendro_ax.set_ylabel('Rows')
             dendro_ax.set_title('Hierarchical Clustering Dendrogram')
             
