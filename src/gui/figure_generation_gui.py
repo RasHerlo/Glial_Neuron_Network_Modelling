@@ -476,6 +476,17 @@ class FigureGenerationGUI:
                                                             command=self.on_sorting_changed)
         self.column_sort_ascending_checkbox.pack(side="left", padx=(0, 5))
         
+        # Dendrogram controls (for MatrixVisualization mode only)
+        dendrogram_frame = ttk.Frame(self.sorting_frame)
+        dendrogram_frame.pack(fill="x", pady=2)
+        
+        self.show_dendrogram_var = tk.BooleanVar(value=False)
+        self.show_dendrogram_checkbox = ttk.Checkbutton(dendrogram_frame, text="Dendrogram", 
+                                                       variable=self.show_dendrogram_var,
+                                                       command=self.on_sorting_changed,
+                                                       state="disabled")  # Initially disabled
+        self.show_dendrogram_checkbox.pack(side="left", padx=(0, 5))
+        
         # Initially empty with instruction text
         self.sorting_instruction_label = ttk.Label(self.sorting_frame, 
                                                  text="Sorting options available for RasterPlot mode",
@@ -1212,6 +1223,9 @@ class FigureGenerationGUI:
         # Show/hide sorting section based on mode
         self.toggle_sorting_section(mode)
         
+        # Update dendrogram toggle state when mode changes
+        self.update_dendrogram_toggle_state()
+        
         # Create required files widgets based on mode
         self.create_required_files_widgets(mode)
         
@@ -1405,6 +1419,9 @@ class FigureGenerationGUI:
             if self.column_sorting_vector_var.get() not in column_sorting_options:
                 self.column_sorting_vector_var.set('')
             
+            # Update dendrogram toggle state after updating sorting vectors
+            self.update_dendrogram_toggle_state()
+            
         except Exception as e:
             print(f"Error updating sorting vectors from labels: {e}")
             # Clear dropdowns on error
@@ -1412,11 +1429,34 @@ class FigureGenerationGUI:
             self.column_sorting_vector_combo['values'] = []
             self.row_sorting_vector_var.set('')
             self.column_sorting_vector_var.set('')
+            # Update dendrogram toggle state after clearing vectors
+            self.update_dendrogram_toggle_state()
     
     def on_sorting_changed(self):
         """Handle changes in sorting controls."""
+        # Update dendrogram toggle availability
+        self.update_dendrogram_toggle_state()
         # Update the figure when sorting options change
         self.update_inspection_figure()
+    
+    def update_dendrogram_toggle_state(self):
+        """Update the state of the dendrogram toggle based on current conditions."""
+        if not hasattr(self, 'show_dendrogram_checkbox'):
+            return
+            
+        # Check if conditions are met for enabling dendrogram toggle
+        # 1. Row Sorting Vector has 'HAC' prefix
+        # 2. Sort Rows toggle is activated
+        row_vector = self.row_sorting_vector_var.get()
+        sort_rows_enabled = self.sort_rows_var.get()
+        
+        # Enable dendrogram toggle only if both conditions are met
+        if sort_rows_enabled and row_vector.startswith('HAC'):
+            self.show_dendrogram_checkbox.config(state="normal")
+        else:
+            self.show_dendrogram_checkbox.config(state="disabled")
+            # Also uncheck it if conditions are not met
+            self.show_dendrogram_var.set(False)
     
     def on_matrix_aesthetic_toggle(self):
         """Handle changes in matrix aesthetic toggle checkbox."""
