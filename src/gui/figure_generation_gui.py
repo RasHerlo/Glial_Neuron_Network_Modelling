@@ -82,7 +82,7 @@ class FigureGenerationGUI:
     def __init__(self):
         self.window = tk.Toplevel()
         self.window.title("Figure Generation")
-        self.window.geometry("1000x800")  # Reduced size for better screen fit
+        self.window.geometry("1250x1200")  # Expanded width by 25% for wider Figure Display
         self.window.configure(bg='#f0f0f0')
         
         # Initialize variables
@@ -506,7 +506,7 @@ class FigureGenerationGUI:
         display_frame.pack(fill="both", expand=True, padx=10, pady=5)
         
         # Create matplotlib figure and canvas
-        self.inspection_fig = Figure(figsize=(10, 6), dpi=100)
+        self.inspection_fig = Figure(figsize=(12.5, 6), dpi=100)
         self.inspection_ax = self.inspection_fig.add_subplot(111)
         
         self.figure_canvas = FigureCanvasTkAgg(self.inspection_fig, display_frame)
@@ -1659,7 +1659,6 @@ class FigureGenerationGUI:
             self.inspection_ax.grid(True, alpha=0.3)
             
             # Refresh canvas
-            self.inspection_fig.tight_layout()
             self.figure_canvas.draw()
             
         except Exception as e:
@@ -1864,7 +1863,11 @@ class FigureGenerationGUI:
             
             # Clear the figure
             self.inspection_fig.clear()
-            self.inspection_ax = self.inspection_fig.add_subplot(111)
+            
+            # Create fixed-size subplot: 4x4 inches, starting at 8.5 inches from left (centered in wider space)
+            # Figure is 12.5 inches wide, 6 inches tall
+            # Position: left=0.56 (7/12.5), bottom=0.167 (1/6), width=0.32 (4/12.5), height=0.667 (4/6)
+            self.inspection_ax = self.inspection_fig.add_axes([0.56, 0.167, 0.32, 0.667])
             
             # Create the matrix visualization
             colormap = self.matrix_colormap.get()

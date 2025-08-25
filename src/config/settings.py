@@ -29,7 +29,7 @@ GUI_CONFIG = {
         'main_menu': '800x600',
         'data_import': '700x500',
         'data_processing': '800x600',
-        'figure_generation': '900x700'
+        'figure_generation': '1125x700'
     },
     'font_family': 'Arial',
     'font_sizes': {
