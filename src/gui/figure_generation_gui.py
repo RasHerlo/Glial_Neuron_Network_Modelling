@@ -1366,6 +1366,10 @@ class FigureGenerationGUI:
         # Reset threshold button
         reset_button = ttk.Button(threshold_frame, text="Reset", command=self.reset_threshold)
         reset_button.grid(row=1, column=2, columnspan=2, sticky="ew", padx=5)
+        
+        # Save clusters button
+        save_clusters_button = ttk.Button(threshold_frame, text="Save Clusters", command=self.save_clusters)
+        save_clusters_button.grid(row=2, column=0, columnspan=4, sticky="ew", padx=5, pady=2)
     
     def reset_threshold(self):
         """Reset the threshold to 0."""
@@ -1960,6 +1964,109 @@ class FigureGenerationGUI:
         self.current_threshold.set(0.0)
         self.cluster_count.set("N/A")
         self.avg_cluster_size.set("N/A")
+    
+    def round_threshold_smart(self, threshold_value):
+        """Round threshold to first meaningful digit after decimal.
+        
+        Examples:
+        - 12.35 -> 12
+        - 3.34 -> 3  
+        - 0.034 -> 0.03
+        - 0.000563 -> 0.0005
+        """
+        if threshold_value == 0:
+            return "0"
+        
+        # If integer part is non-zero, round to integer
+        if abs(threshold_value) >= 1:
+            return str(int(round(threshold_value)))
+        
+        # For values < 1, find first meaningful digit after decimal
+        import math
+        
+        # Find the position of the first non-zero digit after decimal
+        log_val = math.log10(abs(threshold_value))
+        decimal_places = max(1, -int(math.floor(log_val)) + 1)
+        
+        # Round to that precision
+        rounded_val = round(threshold_value, decimal_places)
+        
+        # Format to remove trailing zeros
+        return f"{rounded_val:.{decimal_places}f}".rstrip('0').rstrip('.')
+    
+    def save_clusters(self):
+        """Save current clusters to Raster_row_clusters.csv"""
+        try:
+            # Validate prerequisites
+            if not hasattr(self, 'current_linkage_matrix') or self.current_linkage_matrix is None:
+                raise ValueError("No dendrogram is currently displayed. Please select a HAC sorting vector and generate a dendrogram first.")
+            
+            if not hasattr(self, 'current_threshold') or self.current_threshold.get() == 0:
+                raise ValueError("Threshold is 0 - no clusters will be generated. Please set a meaningful threshold using the slider.")
+            
+            if not hasattr(self, 'row_sorting_vector_var') or not self.row_sorting_vector_var.get():
+                raise ValueError("No row sorting vector is selected. Please select a HAC method first.")
+            
+            if not self.selected_dataset:
+                raise ValueError("No dataset is selected.")
+            
+            # Get current values
+            threshold_value = self.current_threshold.get()
+            row_sorting_vector = self.row_sorting_vector_var.get()
+            dataset_name = self.selected_dataset.name
+            
+            # Generate cluster labels using fcluster
+            from scipy.cluster.hierarchy import fcluster
+            cluster_labels = fcluster(self.current_linkage_matrix, threshold_value, criterion='distance')
+            
+            # Create column name with smart rounding
+            threshold_rounded = self.round_threshold_smart(threshold_value)
+            column_name = f"{row_sorting_vector}_thr_{threshold_rounded}"
+            
+            # Define file paths
+            dataset_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+            clusters_file_path = os.path.join(dataset_path, "Raster_row_clusters.csv")
+            labels_file_path = os.path.join(dataset_path, "Raster_row_labels_and_indices.csv")
+            
+            # Check if labels file exists to get row_labels
+            if not os.path.exists(labels_file_path):
+                raise ValueError(f"Row labels file not found: {labels_file_path}")
+            
+            # Load row labels
+            labels_df = pd.read_csv(labels_file_path)
+            if 'row_labels' not in labels_df.columns:
+                raise ValueError(f"'row_labels' column not found in {labels_file_path}")
+            
+            # Validate cluster labels length matches row labels
+            if len(cluster_labels) != len(labels_df):
+                raise ValueError(f"Cluster labels length ({len(cluster_labels)}) doesn't match number of rows ({len(labels_df)})")
+            
+            # Create or load clusters file
+            if os.path.exists(clusters_file_path):
+                # Load existing clusters file
+                clusters_df = pd.read_csv(clusters_file_path)
+                
+                # Validate row_labels match
+                if not clusters_df['row_labels'].equals(labels_df['row_labels']):
+                    raise ValueError("Row labels in existing clusters file don't match current labels file")
+            else:
+                # Create new clusters file with row_labels column
+                clusters_df = pd.DataFrame({'row_labels': labels_df['row_labels']})
+            
+            # Add or overwrite the cluster column
+            clusters_df[column_name] = cluster_labels
+            
+            # Save the file
+            clusters_df.to_csv(clusters_file_path, index=False)
+            
+            # Show success message
+            num_clusters = len(np.unique(cluster_labels))
+            messagebox.showinfo("Clusters Saved", 
+                              f"Cluster vector '{column_name}' with {num_clusters} clusters "
+                              f"successfully saved to:\n{clusters_file_path}")
+            
+        except Exception as e:
+            messagebox.showerror("Error Saving Clusters", f"Failed to save clusters:\n{str(e)}")
     
     def previous_neuron(self):
         """Navigate to previous neuron."""
