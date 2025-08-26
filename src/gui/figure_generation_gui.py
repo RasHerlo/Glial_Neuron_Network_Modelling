@@ -78,6 +78,21 @@ class FigureGenerationGUI:
                 "convert_to_seconds_default": False,
                 "framerate_default": 10.02
             }
+        },
+        "EnsembleTraces": {
+            "description": "Visualize average traces of neuron clusters with individual traces and stimulus correlations",
+            "file_types": [".npy", ".csv"],
+            "required_files": [
+                {"name": "raster_matrix", "label": "Raster", "description": "Raster matrix file (.npy)", "pattern": "Raster_matrix*", "extension": ".npy"},
+                {"name": "clusters", "label": "Clusters", "description": "Cluster assignments (.csv)", "pattern": "Raster_row_clusters*", "extension": ".csv"},
+                {"name": "annotation", "label": "Annotation", "description": "Binary vector file for annotations (.csv)", "pattern": "*", "extension": ".csv", "optional": True}
+            ],
+            "controls": {
+                "cluster_selection_enabled": True,
+                "show_individual_traces": False,
+                "annotation_enabled_default": False,
+                "annotation_height_ratio": 0.035
+            }
         }
     }
     
@@ -689,6 +704,8 @@ class FigureGenerationGUI:
             self.create_matrix_visualization_file_widgets(mode_config)
         elif mode == "TuningCurve":
             self.create_tuning_curve_file_widgets(mode_config)
+        elif mode == "EnsembleTraces":
+            self.create_ensemble_traces_file_widgets(mode_config)
         else:
             # Generic file widgets for other modes
             self.create_generic_file_widgets(mode_config)
@@ -1074,6 +1091,204 @@ class FigureGenerationGUI:
         ttk.Button(nav_frame, text="▶", width=3,
                   command=self.next_neuron).grid(row=0, column=2, padx=1)
     
+    def create_ensemble_traces_file_widgets(self, mode_config):
+        """Create EnsembleTraces-specific file selection widgets."""
+        # Initialize EnsembleTraces-specific variables
+        self.ensemble_annotation_enabled = tk.BooleanVar(value=mode_config['controls']['annotation_enabled_default'])
+        self.ensemble_annotation_name = tk.StringVar(value="")
+        self.ensemble_selected_cluster = tk.StringVar(value="")
+        self.ensemble_cluster_buttons = {}
+        self.ensemble_available_clusters = []
+        
+        # Raster Matrix selection
+        raster_frame = ttk.Frame(self.file_requirements_container)
+        raster_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(raster_frame, text="Raster:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        raster_var = tk.StringVar()
+        raster_combo = ttk.Combobox(raster_frame, textvariable=raster_var, state="readonly", width=40)
+        raster_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Filter for Raster_matrix* .npy files
+        if hasattr(self, 'available_files'):
+            raster_files = self.filter_files_by_type([".npy"], "Raster_matrix*")
+            raster_combo['values'] = raster_files
+        
+        raster_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Store reference
+        self.file_selection_widgets['raster_matrix'] = {
+            'var': raster_var,
+            'combo': raster_combo,
+            'frame': raster_frame,
+            'config': mode_config['required_files'][0]
+        }
+        
+        # Clusters selection
+        clusters_frame = ttk.Frame(self.file_requirements_container)
+        clusters_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(clusters_frame, text="Clusters:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        clusters_var = tk.StringVar()
+        clusters_combo = ttk.Combobox(clusters_frame, textvariable=clusters_var, state="readonly", width=40)
+        clusters_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Filter for Raster_row_clusters* .csv files
+        if hasattr(self, 'available_files'):
+            cluster_files = self.filter_files_by_type([".csv"], "Raster_row_clusters*")
+            clusters_combo['values'] = cluster_files
+        
+        # Bind to update cluster columns when file is selected
+        def on_cluster_file_change(event=None):
+            self.update_cluster_columns()
+            self.on_required_file_change(event)
+        
+        clusters_combo.bind('<<ComboboxSelected>>', on_cluster_file_change)
+        
+        # Store reference
+        self.file_selection_widgets['clusters'] = {
+            'var': clusters_var,
+            'combo': clusters_combo,
+            'frame': clusters_frame,
+            'config': mode_config['required_files'][1]
+        }
+        
+        # Cluster column selection (will be populated when clusters file is selected)
+        cluster_column_frame = ttk.Frame(self.file_requirements_container)
+        cluster_column_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(cluster_column_frame, text="Cluster Column:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        self.ensemble_cluster_column_var = tk.StringVar()
+        cluster_column_combo = ttk.Combobox(cluster_column_frame, textvariable=self.ensemble_cluster_column_var, 
+                                          state="readonly", width=30)
+        cluster_column_combo.grid(row=0, column=1, padx=5, pady=2)
+        cluster_column_combo.bind('<<ComboboxSelected>>', self.on_cluster_column_change)
+        
+        self.ensemble_cluster_column_combo = cluster_column_combo
+        
+        # Annotation section
+        annotation_frame = ttk.Frame(self.file_requirements_container)
+        annotation_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(annotation_frame, text="Annotation:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        annotation_var = tk.StringVar()
+        annotation_combo = ttk.Combobox(annotation_frame, textvariable=annotation_var, state="readonly", width=30)
+        annotation_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Populate with binary vector files
+        if hasattr(self, 'available_files'):
+            binary_vector_files = self.detect_binary_vector_files()
+            annotation_combo['values'] = binary_vector_files
+        
+        annotation_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Checkbox for enabling annotations
+        ttk.Checkbutton(annotation_frame, text="Enable", variable=self.ensemble_annotation_enabled,
+                       command=self.update_inspection_figure).grid(row=0, column=2, padx=5)
+        
+        # Annotation name input (below the dropdown)
+        annotation_name_frame = ttk.Frame(self.file_requirements_container)
+        annotation_name_frame.pack(fill="x", pady=2)
+        ttk.Label(annotation_name_frame, text="Annotation Name:").grid(row=0, column=0, sticky="w", padx=5)
+        annotation_name_entry = ttk.Entry(annotation_name_frame, textvariable=self.ensemble_annotation_name, width=30)
+        annotation_name_entry.grid(row=0, column=1, padx=5, pady=2)
+        annotation_name_entry.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        # Bind annotation file selection to update name field
+        def on_annotation_file_change(event=None):
+            selected_file = annotation_var.get()
+            if selected_file and not self.ensemble_annotation_name.get():
+                # Set default name to filename without extension
+                default_name = os.path.splitext(os.path.basename(selected_file))[0]
+                self.ensemble_annotation_name.set(default_name)
+            self.on_required_file_change(event)
+        
+        annotation_combo.bind('<<ComboboxSelected>>', on_annotation_file_change)
+        
+        # Store reference
+        self.file_selection_widgets['annotation'] = {
+            'var': annotation_var,
+            'combo': annotation_combo,
+            'frame': annotation_frame,
+            'config': mode_config['required_files'][2],
+            'name_var': self.ensemble_annotation_name,
+            'name_entry': annotation_name_entry
+        }
+    
+    def update_cluster_columns(self):
+        """Update the cluster column dropdown based on selected cluster file."""
+        if 'clusters' not in self.file_selection_widgets:
+            return
+            
+        cluster_file = self.file_selection_widgets['clusters']['var'].get()
+        if not cluster_file:
+            return
+            
+        try:
+            # Load cluster file to get column names
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            cluster_path = os.path.join(dataset_path, cluster_file)
+            cluster_df = pd.read_csv(cluster_path)
+            
+            # Get all columns except 'row_labels'
+            cluster_columns = [col for col in cluster_df.columns if col != 'row_labels']
+            
+            # Update the dropdown
+            if hasattr(self, 'ensemble_cluster_column_combo'):
+                self.ensemble_cluster_column_combo['values'] = cluster_columns
+                if cluster_columns:
+                    self.ensemble_cluster_column_var.set(cluster_columns[0])  # Select first column by default
+                    self.on_cluster_column_change()
+        except Exception as e:
+            print(f"Error loading cluster columns: {e}")
+    
+    def on_cluster_column_change(self, event=None):
+        """Handle cluster column selection change."""
+        self.update_cluster_buttons()
+        self.update_inspection_figure()
+    
+    def update_cluster_buttons(self):
+        """Update cluster toggle buttons based on selected cluster column."""
+        if not hasattr(self, 'ensemble_cluster_column_var'):
+            return
+            
+        cluster_column = self.ensemble_cluster_column_var.get()
+        if not cluster_column or 'clusters' not in self.file_selection_widgets:
+            return
+            
+        cluster_file = self.file_selection_widgets['clusters']['var'].get()
+        if not cluster_file:
+            return
+            
+        try:
+            # Load cluster data
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            cluster_path = os.path.join(dataset_path, cluster_file)
+            cluster_df = pd.read_csv(cluster_path)
+            
+            # Get unique cluster values and sort them
+            unique_clusters = sorted(cluster_df[cluster_column].unique())
+            self.ensemble_available_clusters = unique_clusters
+            
+            # Clear existing buttons
+            self.ensemble_cluster_buttons.clear()
+            
+            # Set default selection to first cluster
+            if unique_clusters and not self.ensemble_selected_cluster.get():
+                self.ensemble_selected_cluster.set(str(unique_clusters[0]))
+            
+            # Update the cluster toggle buttons display
+            if hasattr(self, 'ensemble_cluster_buttons_frame'):
+                self.create_cluster_toggle_buttons()
+                
+        except Exception as e:
+            print(f"Error updating cluster buttons: {e}")
+            self.ensemble_available_clusters = []
+    
     def filter_files_by_type(self, allowed_extensions, pattern=None):
         """Filter available files by allowed extensions and optional pattern."""
         if not hasattr(self, 'available_files'):
@@ -1182,6 +1397,13 @@ class FigureGenerationGUI:
                     'annotation' in self.file_selection_widgets and 
                     self.file_selection_widgets['annotation']['var'].get())
         
+        # For EnsembleTraces, raster_matrix and clusters are required
+        elif mode == "EnsembleTraces":
+            return ('raster_matrix' in self.file_selection_widgets and 
+                    self.file_selection_widgets['raster_matrix']['var'].get() and
+                    'clusters' in self.file_selection_widgets and 
+                    self.file_selection_widgets['clusters']['var'].get())
+        
         # For other modes, check all non-optional files
         for file_name, widget_info in self.file_selection_widgets.items():
             if not widget_info['config'].get('optional', False):
@@ -1282,6 +1504,8 @@ class FigureGenerationGUI:
                 frame_title = "RasterPlot Controls"
             elif mode == "TuningCurve":
                 frame_title = "TuningCurve Controls"
+            elif mode == "EnsembleTraces":
+                frame_title = "EnsembleTraces Controls"
             else:
                 frame_title = f"{mode} Controls"
             
@@ -1292,6 +1516,8 @@ class FigureGenerationGUI:
                 self.create_rasterplot_controls(frame, mode_config)
             elif mode == "TuningCurve":
                 self.create_tuning_curve_controls(frame, mode_config)
+            elif mode == "EnsembleTraces":
+                self.create_ensemble_traces_controls(frame, mode_config)
             else:
                 # Placeholder for other custom modes
                 placeholder_label = ttk.Label(frame, 
@@ -1554,6 +1780,86 @@ class FigureGenerationGUI:
                                     from_=-1000, to=1000, width=8)
         auc_end_spinbox.grid(row=2, column=3, padx=5, pady=2)
         auc_end_spinbox.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+
+    def create_ensemble_traces_controls(self, parent_frame, mode_config):
+        """Create EnsembleTraces-specific controls."""
+        # Cluster Selection Controls
+        cluster_frame = ttk.LabelFrame(parent_frame, text="Cluster Selection", padding=5)
+        cluster_frame.pack(fill="x", pady=5)
+        
+        # Container for cluster buttons (will be populated dynamically)
+        self.ensemble_cluster_buttons_frame = ttk.Frame(cluster_frame)
+        self.ensemble_cluster_buttons_frame.pack(fill="x", pady=5)
+        
+        # Create cluster buttons based on available clusters
+        self.create_cluster_toggle_buttons()
+        
+        # Visualization Options
+        viz_frame = ttk.LabelFrame(parent_frame, text="Visualization Options", padding=5)
+        viz_frame.pack(fill="x", pady=5)
+        
+        # Show individual traces checkbox (for future implementation)
+        self.ensemble_show_individual = tk.BooleanVar(value=mode_config['controls']['show_individual_traces'])
+        ttk.Checkbutton(viz_frame, text="Show Individual Traces", 
+                       variable=self.ensemble_show_individual,
+                       command=self.update_inspection_figure).pack(anchor="w", padx=5, pady=2)
+    
+    def create_cluster_toggle_buttons(self):
+        """Create toggle buttons for cluster selection."""
+        # Clear existing buttons
+        for widget in self.ensemble_cluster_buttons_frame.winfo_children():
+            widget.destroy()
+        
+        if not hasattr(self, 'ensemble_available_clusters') or not self.ensemble_available_clusters:
+            # Show placeholder text
+            placeholder_label = ttk.Label(self.ensemble_cluster_buttons_frame, 
+                                        text="Select cluster file to show cluster buttons",
+                                        font=("Arial", 10), foreground="gray")
+            placeholder_label.pack(pady=10)
+            return
+        
+        # Create toggle buttons for each cluster
+        buttons_per_row = 6  # Adjust as needed
+        for i, cluster_id in enumerate(self.ensemble_available_clusters):
+            row = i // buttons_per_row
+            col = i % buttons_per_row
+            
+            # Create button
+            btn = ttk.Button(self.ensemble_cluster_buttons_frame, 
+                           text=f"Cluster {cluster_id}",
+                           command=lambda c=cluster_id: self.select_cluster(c))
+            btn.grid(row=row, column=col, padx=2, pady=2, sticky="ew")
+            
+            # Store button reference
+            self.ensemble_cluster_buttons[cluster_id] = btn
+        
+        # Configure grid weights for equal spacing
+        for col in range(buttons_per_row):
+            self.ensemble_cluster_buttons_frame.grid_columnconfigure(col, weight=1)
+        
+        # Update button states
+        self.update_cluster_button_states()
+    
+    def select_cluster(self, cluster_id):
+        """Select a specific cluster and update visualization."""
+        self.ensemble_selected_cluster.set(str(cluster_id))
+        self.update_cluster_button_states()
+        self.update_inspection_figure()
+    
+    def update_cluster_button_states(self):
+        """Update the visual state of cluster buttons to show selection."""
+        if not hasattr(self, 'ensemble_cluster_buttons'):
+            return
+            
+        selected_cluster = self.ensemble_selected_cluster.get()
+        
+        for cluster_id, button in self.ensemble_cluster_buttons.items():
+            if str(cluster_id) == selected_cluster:
+                # Highlight selected button (using different styling)
+                button.configure(style="Selected.TButton")
+            else:
+                # Normal button style
+                button.configure(style="TButton")
 
     def toggle_sorting_section(self, mode):
         """Show or hide the sorting section based on the selected mode."""
@@ -2208,6 +2514,8 @@ class FigureGenerationGUI:
             self.generate_matrix_visualization_figure()
         elif mode == "TuningCurve":
             self.generate_tuning_curve_figure()
+        elif mode == "EnsembleTraces":
+            self.generate_ensemble_traces_figure()
         else:
             # Placeholder for other custom modes
             self.inspection_ax.text(0.5, 0.5, f"Figure generation for '{mode}' mode\nwill be implemented based on:\n\n{mode_config.get('description', 'No description available')}", 
@@ -2774,6 +3082,177 @@ class FigureGenerationGUI:
                                   ha='center', va='center', transform=self.inspection_ax.transAxes,
                                   fontsize=10, color='red')
             print(f"TuningCurve error: {e}")
+    
+    def generate_ensemble_traces_figure(self):
+        """Generate EnsembleTraces visualization with three-panel layout."""
+        try:
+            # Check if required files are selected
+            if ('raster_matrix' not in self.file_selection_widgets or 
+                not self.file_selection_widgets['raster_matrix']['var'].get() or
+                'clusters' not in self.file_selection_widgets or
+                not self.file_selection_widgets['clusters']['var'].get()):
+                
+                self.inspection_ax.text(0.5, 0.5, 'Please select both Raster matrix and Clusters files', 
+                                      ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                      fontsize=12, alpha=0.7)
+                return
+            
+            # Check if cluster column is selected
+            if not hasattr(self, 'ensemble_cluster_column_var') or not self.ensemble_cluster_column_var.get():
+                self.inspection_ax.text(0.5, 0.5, 'Please select a cluster column', 
+                                      ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                      fontsize=12, alpha=0.7)
+                return
+            
+            # Load data files
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            
+            # Load raster matrix
+            raster_file = self.file_selection_widgets['raster_matrix']['var'].get()
+            raster_path = os.path.join(dataset_path, raster_file)
+            raster_matrix = np.load(raster_path)
+            
+            # Load cluster data
+            cluster_file = self.file_selection_widgets['clusters']['var'].get()
+            cluster_path = os.path.join(dataset_path, cluster_file)
+            cluster_df = pd.read_csv(cluster_path)
+            cluster_column = self.ensemble_cluster_column_var.get()
+            
+            # Load annotation data if enabled
+            annotation_data = None
+            if (self.ensemble_annotation_enabled.get() and 
+                'annotation' in self.file_selection_widgets and 
+                self.file_selection_widgets['annotation']['var'].get()):
+                
+                annotation_file = self.file_selection_widgets['annotation']['var'].get()
+                annotation_path = os.path.join(dataset_path, annotation_file)
+                annotation_df = pd.read_csv(annotation_path)
+                annotation_data = annotation_df.iloc[:, 0].values  # Get first column as numpy array
+            
+            # Clear the current axis and create three-panel layout
+            self.inspection_ax.clear()
+            
+            # Create three subplots with specified widths (4.5, 4.5, 3.5 inches)
+            # Calculate width ratios based on inch specifications
+            total_width = 4.5 + 4.5 + 3.5  # 12.5 inches total
+            width_ratios = [4.5/total_width, 4.5/total_width, 3.5/total_width]
+            
+            # Remove the single axis and create new subplots
+            self.inspection_fig.clear()
+            
+            # Create three subplots
+            ax1 = self.inspection_fig.add_subplot(1, 3, 1)  # Left panel - Ensemble traces
+            ax2 = self.inspection_fig.add_subplot(1, 3, 2)  # Middle panel - Reserved for future
+            ax3 = self.inspection_fig.add_subplot(1, 3, 3)  # Right panel - Reserved for future
+            
+            # Adjust subplot parameters to match width ratios
+            self.inspection_fig.subplots_adjust(left=0.08, right=0.95, bottom=0.15, top=0.9, wspace=0.3)
+            
+            # Calculate cluster averages and plot in left panel
+            self.plot_ensemble_traces(ax1, raster_matrix, cluster_df, cluster_column, annotation_data)
+            
+            # Add placeholder text to other panels
+            ax2.text(0.5, 0.5, 'Panel 2\n(Reserved for future functionality)', 
+                    ha='center', va='center', transform=ax2.transAxes,
+                    fontsize=12, alpha=0.7)
+            ax2.set_title('Individual Traces')
+            
+            ax3.text(0.5, 0.5, 'Panel 3\n(Reserved for future functionality)', 
+                    ha='center', va='center', transform=ax3.transAxes,
+                    fontsize=12, alpha=0.7)
+            ax3.set_title('Correlations')
+            
+            # Update the main axis reference to the first panel for compatibility
+            self.inspection_ax = ax1
+            
+        except Exception as e:
+            # Display error message on plot
+            if hasattr(self, 'inspection_ax'):
+                self.inspection_ax.clear()
+                self.inspection_ax.text(0.5, 0.5, f'Error generating Ensemble Traces:\n{str(e)}', 
+                                      ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                      fontsize=10, color='red')
+            print(f"EnsembleTraces error: {e}")
+    
+    def plot_ensemble_traces(self, ax, raster_matrix, cluster_df, cluster_column, annotation_data=None):
+        """Plot ensemble traces for all clusters in the left panel."""
+        try:
+            # Get unique clusters and sort them
+            unique_clusters = sorted(cluster_df[cluster_column].unique())
+            
+            # Calculate cluster averages
+            cluster_traces = {}
+            for cluster_id in unique_clusters:
+                # Get indices of neurons in this cluster
+                cluster_mask = cluster_df[cluster_column] == cluster_id
+                cluster_indices = cluster_df[cluster_mask].index.tolist()
+                
+                # Extract traces for neurons in this cluster
+                cluster_neurons = raster_matrix[cluster_indices, :]
+                
+                # Calculate mean trace, ignoring NaNs
+                cluster_mean = np.nanmean(cluster_neurons, axis=0)
+                cluster_traces[cluster_id] = cluster_mean
+            
+            # Plot traces with vertical offset
+            y_offset = 0
+            y_spacing = 1.2  # Space between traces
+            selected_cluster = self.ensemble_selected_cluster.get()
+            
+            # Time axis (assuming column indices represent time)
+            time_axis = np.arange(raster_matrix.shape[1])
+            
+            for i, cluster_id in enumerate(unique_clusters):
+                trace = cluster_traces[cluster_id]
+                y_pos = y_offset + (len(unique_clusters) - 1 - i) * y_spacing
+                
+                # Determine line style and color based on selection
+                if str(cluster_id) == selected_cluster:
+                    # Highlight selected cluster
+                    line = ax.plot(time_axis, trace + y_pos, linewidth=2.5, 
+                                 label=f'Cluster {cluster_id}', color='red')
+                    # Add outline box around selected trace
+                    ax.add_patch(plt.Rectangle((0, y_pos - 0.3), len(time_axis), 0.6, 
+                                             fill=False, edgecolor='red', linewidth=2, alpha=0.7))
+                else:
+                    # Normal cluster trace
+                    line = ax.plot(time_axis, trace + y_pos, linewidth=1.5, 
+                                 label=f'Cluster {cluster_id}', alpha=0.8)
+                
+                # Add cluster label
+                ax.text(-len(time_axis)*0.02, y_pos, f'Cluster {cluster_id}', 
+                       ha='right', va='center', fontsize=10)
+            
+            # Plot annotation if available
+            if annotation_data is not None and self.ensemble_annotation_enabled.get():
+                annotation_name = self.ensemble_annotation_name.get() or "Annotation"
+                
+                # Scale annotation to fit at the top
+                annotation_y = (len(unique_clusters)) * y_spacing + 0.5
+                annotation_scaled = annotation_data * 0.3  # Scale down annotation
+                ax.plot(time_axis, annotation_scaled + annotation_y, 'k-', 
+                       linewidth=1, alpha=0.7, label=annotation_name)
+                ax.text(-len(time_axis)*0.02, annotation_y, annotation_name, 
+                       ha='right', va='center', fontsize=10, style='italic')
+            
+            # Formatting
+            ax.set_xlabel('Time (frames)')
+            ax.set_ylabel('Clusters')
+            ax.set_title('Ensemble Traces')
+            ax.grid(True, alpha=0.3)
+            
+            # Set y-axis limits and remove y-ticks (since we have custom labels)
+            ax.set_ylim(-0.5, (len(unique_clusters) + 1) * y_spacing)
+            ax.set_yticks([])
+            
+            # Set x-axis limits
+            ax.set_xlim(0, len(time_axis))
+            
+        except Exception as e:
+            ax.text(0.5, 0.5, f'Error plotting ensemble traces:\n{str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes,
+                   fontsize=10, color='red')
+            print(f"Error in plot_ensemble_traces: {e}")
     
     def detect_stimulus_starts(self, annotation_data):
         """Detect stimulus start points as 0->1 transitions."""
