@@ -2313,8 +2313,9 @@ class FigureGenerationGUI:
                 
                 if linkage_matrix is not None:
                     # Determine if we should invert the dendrogram order
+                    # Flip the logic to match matrix sorting behavior
                     invert_order = (hasattr(self, 'row_sort_ascending_var') and 
-                                  not self.row_sort_ascending_var.get())
+                                  self.row_sort_ascending_var.get())
                     
                     # Create dendrogram subplot
                     dendro_ax = self.create_dendrogram_subplot(linkage_matrix, matrix_data.shape[0], invert_order)
