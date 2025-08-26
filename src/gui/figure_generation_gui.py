@@ -21,6 +21,7 @@ try:
     import matplotlib.pyplot as plt
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     from matplotlib.figure import Figure
+    from matplotlib.widgets import Slider
     import seaborn as sns
     from scipy.cluster.hierarchy import dendrogram
     MATPLOTLIB_AVAILABLE = True
@@ -83,7 +84,7 @@ class FigureGenerationGUI:
     def __init__(self):
         self.window = tk.Toplevel()
         self.window.title("Figure Generation")
-        self.window.geometry("1250x1200")  # Expanded width by 25% for wider Figure Display
+        self.window.geometry("1400x1200")  # Expanded width by 25% for wider Figure Display
         self.window.configure(bg='#f0f0f0')
         
         # Initialize variables
@@ -1326,6 +1327,15 @@ class FigureGenerationGUI:
         """Create Dendrogram-specific controls."""
         # Initialize dendrogram control variables
         self.dendrogram_log_axis = tk.BooleanVar(value=False)
+        self.current_threshold = tk.DoubleVar(value=0.0)
+        self.cluster_count = tk.StringVar(value="N/A")
+        self.avg_cluster_size = tk.StringVar(value="N/A")
+        
+        # Initialize threshold-related instance variables
+        self.threshold_slider = None
+        self.threshold_line = None
+        self.current_linkage_matrix = None
+        self.threshold_update_after_id = None  # For debouncing
         
         # Log/Lin X-axis toggle
         ttk.Label(parent_frame, text="Log/Lin X-axis:").grid(row=0, column=0, sticky="w", padx=5)
@@ -1333,6 +1343,165 @@ class FigureGenerationGUI:
                                           variable=self.dendrogram_log_axis,
                                           command=self.on_dendrogram_log_axis_changed)
         log_axis_checkbox.grid(row=0, column=1, sticky="w", padx=5, pady=2)
+        
+        # Threshold information display
+        threshold_frame = ttk.LabelFrame(parent_frame, text="Cluster Threshold", padding=5)
+        threshold_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        
+        # Threshold value
+        ttk.Label(threshold_frame, text="Threshold:").grid(row=0, column=0, sticky="w", padx=5)
+        threshold_label = ttk.Label(threshold_frame, textvariable=self.current_threshold, width=10)
+        threshold_label.grid(row=0, column=1, sticky="w", padx=5)
+        
+        # Cluster count
+        ttk.Label(threshold_frame, text="Clusters:").grid(row=0, column=2, sticky="w", padx=5)
+        cluster_count_label = ttk.Label(threshold_frame, textvariable=self.cluster_count, width=8)
+        cluster_count_label.grid(row=0, column=3, sticky="w", padx=5)
+        
+        # Average cluster size
+        ttk.Label(threshold_frame, text="Avg Size:").grid(row=1, column=0, sticky="w", padx=5)
+        avg_size_label = ttk.Label(threshold_frame, textvariable=self.avg_cluster_size, width=10)
+        avg_size_label.grid(row=1, column=1, sticky="w", padx=5)
+        
+        # Reset threshold button
+        reset_button = ttk.Button(threshold_frame, text="Reset", command=self.reset_threshold)
+        reset_button.grid(row=1, column=2, columnspan=2, sticky="ew", padx=5)
+    
+    def reset_threshold(self):
+        """Reset the threshold to 0."""
+        if hasattr(self, 'threshold_slider') and self.threshold_slider is not None:
+            self.threshold_slider.set_val(0.0)
+            self.update_threshold_display(0.0)
+    
+    def update_threshold_display(self, threshold_value):
+        """Update the threshold display and cluster information."""
+        self.current_threshold.set(round(threshold_value, 4))
+        
+        if hasattr(self, 'current_linkage_matrix') and self.current_linkage_matrix is not None:
+            cluster_info = self.calculate_cluster_info(threshold_value)
+            self.cluster_count.set(str(cluster_info['count']))
+            self.avg_cluster_size.set(f"{cluster_info['avg_size']:.1f}")
+        else:
+            self.cluster_count.set("N/A")
+            self.avg_cluster_size.set("N/A")
+    
+    def calculate_cluster_info(self, threshold_value):
+        """Calculate cluster information at the given threshold."""
+        try:
+            from scipy.cluster.hierarchy import fcluster
+            
+            if self.current_linkage_matrix is None:
+                return {'count': 0, 'avg_size': 0.0}
+            
+            # Get clusters at the threshold
+            clusters = fcluster(self.current_linkage_matrix, threshold_value, criterion='distance')
+            
+            # Calculate cluster statistics
+            unique_clusters = np.unique(clusters)
+            cluster_count = len(unique_clusters)
+            
+            if cluster_count > 0:
+                cluster_sizes = [np.sum(clusters == cluster_id) for cluster_id in unique_clusters]
+                avg_cluster_size = np.mean(cluster_sizes)
+            else:
+                avg_cluster_size = 0.0
+            
+            return {
+                'count': cluster_count,
+                'avg_size': avg_cluster_size,
+                'clusters': clusters
+            }
+        except Exception as e:
+            print(f"Error calculating cluster info: {e}")
+            return {'count': 0, 'avg_size': 0.0}
+    
+    def on_threshold_changed(self, val):
+        """Handle threshold slider changes with debouncing."""
+        # Cancel any pending update
+        if self.threshold_update_after_id is not None:
+            self.inspection_fig.canvas.get_tk_widget().after_cancel(self.threshold_update_after_id)
+        
+        # Schedule a new update with slight delay for performance
+        self.threshold_update_after_id = self.inspection_fig.canvas.get_tk_widget().after(
+            100, lambda: self.update_dendrogram_threshold(val))
+    
+    def update_dendrogram_threshold(self, threshold_value):
+        """Update the dendrogram with new threshold value."""
+        try:
+            # Update the threshold display
+            self.update_threshold_display(threshold_value)
+            
+            # Update the vertical threshold line
+            if hasattr(self, 'threshold_line') and self.threshold_line is not None:
+                # Since x-axis is inverted, we need to handle the positioning correctly
+                self.threshold_line.set_xdata([threshold_value, threshold_value])
+            
+            # Redraw the dendrogram with new color threshold
+            if hasattr(self, 'dendro_ax') and hasattr(self, 'current_linkage_matrix'):
+                if self.dendro_ax is not None and self.current_linkage_matrix is not None:
+                    self.redraw_dendrogram_with_threshold(threshold_value)
+            
+            # Refresh the canvas
+            self.inspection_fig.canvas.draw_idle()
+            
+        except Exception as e:
+            print(f"Error updating dendrogram threshold: {e}")
+    
+    def redraw_dendrogram_with_threshold(self, threshold_value):
+        """Redraw the dendrogram with the specified color threshold."""
+        try:
+            # Clear the dendrogram axis but preserve the slider
+            self.dendro_ax.clear()
+            
+            # Redraw dendrogram with new color threshold
+            dendro_result = dendrogram(
+                self.current_linkage_matrix,
+                ax=self.dendro_ax,
+                orientation='right',
+                leaf_rotation=0,
+                no_labels=True,
+                color_threshold=threshold_value if threshold_value > 0 else 0,
+                above_threshold_color='black'
+            )
+            
+            # Invert the x-axis so leaves are on the right
+            self.dendro_ax.invert_xaxis()
+            
+            # Reapply logarithmic scaling if enabled
+            if hasattr(self, 'dendrogram_log_axis') and self.dendrogram_log_axis.get():
+                xlim = self.dendro_ax.get_xlim()
+                x_max = xlim[0]
+                x_min = xlim[1]
+                
+                if x_min <= 0:
+                    x_min = max(1e-10, x_max * 1e-6)
+                if x_max <= 0:
+                    x_max = 1.0
+                
+                self.dendro_ax.set_xlim(left=x_max, right=x_min)
+                self.dendro_ax.set_xscale('log')
+            else:
+                self.dendro_ax.set_xscale('linear')
+            
+            # Reapply inversion if needed
+            if hasattr(self, 'invert_dendrogram_order') and self.invert_dendrogram_order:
+                self.dendro_ax.invert_yaxis()
+            
+            # Restore axis labels and title
+            scale_type = "Log" if (hasattr(self, 'dendrogram_log_axis') and self.dendrogram_log_axis.get()) else "Linear"
+            self.dendro_ax.set_xlabel(f'Linkage Distance ({scale_type})')
+            self.dendro_ax.set_ylabel('Rows')
+            self.dendro_ax.set_title('Hierarchical Clustering Dendrogram')
+            
+            # Redraw the threshold line
+            if threshold_value > 0:
+                xlim = self.dendro_ax.get_xlim()
+                ylim = self.dendro_ax.get_ylim()
+                self.threshold_line = self.dendro_ax.axvline(
+                    x=threshold_value, color='red', linestyle='--', alpha=0.7, linewidth=2)
+            
+        except Exception as e:
+            print(f"Error redrawing dendrogram: {e}")
     
     def create_tuning_curve_controls(self, parent_frame, mode_config):
         """Create TuningCurve-specific controls."""
@@ -1496,6 +1665,10 @@ class FigureGenerationGUI:
     
     def on_dendrogram_log_axis_changed(self):
         """Handle changes in dendrogram log/linear axis toggle."""
+        # Reset threshold when switching between log and linear scales
+        if hasattr(self, 'threshold_slider') and self.threshold_slider is not None:
+            self.threshold_slider.set_val(0.0)
+        
         # Update the figure when log axis toggle changes
         if (hasattr(self, 'selected_mode') and self.selected_mode == "MatrixVisualization" and
             hasattr(self, 'show_dendrogram_var') and self.show_dendrogram_var.get()):
@@ -1646,11 +1819,16 @@ class FigureGenerationGUI:
             return None
 
     def create_dendrogram_subplot(self, linkage_matrix, matrix_rows, invert_order=False):
-        """Create dendrogram subplot with proper alignment to matrix rows."""
+        """Create dendrogram subplot with proper alignment to matrix rows and interactive threshold slider."""
         try:
+            # Store the current linkage matrix and invert order for threshold functionality
+            self.current_linkage_matrix = linkage_matrix
+            self.invert_dendrogram_order = invert_order
+            
             # Create dendrogram subplot
             # Position: left=0.04 (0.5/12.5), bottom=0.167, width=0.512 (6.4/12.5, 20% reduction), height=0.667
             dendro_ax = self.inspection_fig.add_axes([0.04, 0.167, 0.512, 0.667])
+            self.dendro_ax = dendro_ax  # Store reference for threshold updates
             
             # Generate dendrogram without labels
             dendro_result = dendrogram(
@@ -1659,7 +1837,7 @@ class FigureGenerationGUI:
                 orientation='right',  # Leaves on the right side
                 leaf_rotation=0,      # Keep labels horizontal
                 no_labels=True,       # Remove neuron indices
-                color_threshold=0,    # Use default coloring
+                color_threshold=0,    # Start with default coloring
                 above_threshold_color='black'
             )
             
@@ -1705,12 +1883,83 @@ class FigureGenerationGUI:
             # Store dendrogram result for future threshold functionality
             self.current_dendrogram_result = dendro_result
             
+            # Add interactive threshold slider
+            self.add_threshold_slider(dendro_ax, linkage_matrix)
+            
             return dendro_ax
             
         except Exception as e:
             print(f"Error creating dendrogram subplot: {e}")
             return None
+    
+    def add_threshold_slider(self, dendro_ax, linkage_matrix):
+        """Add interactive threshold slider to the dendrogram."""
+        try:
+            from matplotlib.widgets import Slider
+            
+            # Get the current axis limits to determine slider range
+            xlim = dendro_ax.get_xlim()
+            
+            # Since x-axis is inverted, xlim[0] is max, xlim[1] is min
+            x_max = xlim[0]  # Maximum linkage distance
+            x_min = max(0, xlim[1])  # Minimum linkage distance (ensure non-negative)
+            
+            # Handle case where max and min are too close
+            if x_max - x_min < 1e-10:
+                x_max = max(1.0, x_max)
+                x_min = 0.0
+            
+            # Create slider axes positioned below the dendrogram with space for axis label
+            # Position: [left, bottom, width, height] - positioned below the dendrogram
+            slider_ax = self.inspection_fig.add_axes([0.04, 0.05, 0.512, 0.03])
+            
+            # Create the threshold slider with inverted direction to match dendrogram
+            # Since dendrogram x-axis is inverted (leaves on right), slider should be too
+            self.threshold_slider = Slider(
+                ax=slider_ax,
+                label='Threshold',
+                valmin=x_min,
+                valmax=x_max,
+                valinit=0.0,  # Start at 0 as requested
+                valfmt='%.3f',
+                facecolor='lightblue',
+                alpha=0.7
+            )
+            
+            # Invert the slider axis to match the dendrogram orientation
+            slider_ax.invert_xaxis()
+            
+            # Connect the slider to the update function
+            self.threshold_slider.on_changed(self.on_threshold_changed)
+            
+            # Initialize the threshold line (invisible at start since threshold is 0)
+            self.threshold_line = None
+            
+            # Initialize the display with threshold 0
+            self.update_threshold_display(0.0)
+            
+        except ImportError:
+            print("Warning: matplotlib.widgets not available, threshold slider disabled")
+        except Exception as e:
+            print(f"Error adding threshold slider: {e}")
 
+    def reset_threshold_variables(self):
+        """Reset threshold-related variables when switching datasets or clearing figures."""
+        self.threshold_slider = None
+        self.threshold_line = None
+        self.current_linkage_matrix = None
+        self.dendro_ax = None
+        if self.threshold_update_after_id is not None:
+            try:
+                self.inspection_fig.canvas.get_tk_widget().after_cancel(self.threshold_update_after_id)
+            except:
+                pass
+            self.threshold_update_after_id = None
+        
+        # Reset display variables
+        self.current_threshold.set(0.0)
+        self.cluster_count.set("N/A")
+        self.avg_cluster_size.set("N/A")
     
     def previous_neuron(self):
         """Navigate to previous neuron."""
@@ -1928,6 +2177,7 @@ class FigureGenerationGUI:
             
             # Clear the figure and create new subplots if needed
             self.inspection_fig.clear()
+            self.reset_threshold_variables()
             
             if show_annotation and annotation_data is not None:
                 # Create subplots with annotation
@@ -2009,6 +2259,7 @@ class FigureGenerationGUI:
                 # Create a temporary axis for error display if it doesn't exist
                 if not hasattr(self, 'inspection_ax') or self.inspection_ax is None:
                     self.inspection_fig.clear()
+                    self.reset_threshold_variables()
                     self.inspection_ax = self.inspection_fig.add_axes([0.56, 0.167, 0.32, 0.667])
                 self.inspection_ax.text(0.5, 0.5, 'Please select a Matrix file', 
                                       ha='center', va='center', transform=self.inspection_ax.transAxes,
@@ -2028,6 +2279,7 @@ class FigureGenerationGUI:
                 # Create a temporary axis for error display if it doesn't exist
                 if not hasattr(self, 'inspection_ax') or self.inspection_ax is None:
                     self.inspection_fig.clear()
+                    self.reset_threshold_variables()
                     self.inspection_ax = self.inspection_fig.add_axes([0.56, 0.167, 0.32, 0.667])
                 self.inspection_ax.text(0.5, 0.5, f'Matrix must be 2D. Current shape: {matrix_data.shape}', 
                                       ha='center', va='center', transform=self.inspection_ax.transAxes,
@@ -2043,6 +2295,7 @@ class FigureGenerationGUI:
             
             # Clear the figure
             self.inspection_fig.clear()
+            self.reset_threshold_variables()
             
             # Check if dendrogram toggle is active and conditions are met
             show_dendrogram = (hasattr(self, 'show_dendrogram_var') and 
@@ -2235,6 +2488,7 @@ class FigureGenerationGUI:
             
             # Clear figure and create subplots
             self.inspection_fig.clear()
+            self.reset_threshold_variables()
             gs = self.inspection_fig.add_gridspec(2, 1, hspace=0.3)
             
             # Upper subplot: Single neuron
@@ -2406,6 +2660,7 @@ class FigureGenerationGUI:
         except Exception as e:
             # Clear figure and show error
             self.inspection_fig.clear()
+            self.reset_threshold_variables()
             self.inspection_ax = self.inspection_fig.add_subplot(111)
             self.inspection_ax.text(0.5, 0.5, f'Error generating Tuning Curve:\n{str(e)}', 
                                   ha='center', va='center', transform=self.inspection_ax.transAxes,
