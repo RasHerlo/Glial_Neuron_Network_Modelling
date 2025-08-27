@@ -3206,17 +3206,29 @@ class FigureGenerationGUI:
                 trace = cluster_traces[cluster_id]
                 y_pos = y_offset + (len(unique_clusters) - 1 - i) * y_spacing
                 
+                # Normalize trace to 0-1 range and center around 0.5
+                trace_min = np.nanmin(trace)
+                trace_max = np.nanmax(trace)
+                if trace_max > trace_min:  # Avoid division by zero
+                    trace_normalized = (trace - trace_min) / (trace_max - trace_min)  # 0-1 range
+                else:
+                    trace_normalized = np.full_like(trace, 0.5)  # If flat trace, center at 0.5
+                
+                # Center the normalized trace around 0.5 and add y position offset
+                trace_centered = trace_normalized - 0.5  # Now ranges from -0.5 to 0.5
+                trace_final = trace_centered + y_pos  # Add vertical position
+                
                 # Determine line style and color based on selection
                 if str(cluster_id) == selected_cluster:
                     # Highlight selected cluster
-                    line = ax.plot(time_axis, trace + y_pos, linewidth=2.5, 
+                    line = ax.plot(time_axis, trace_final, linewidth=2.5, 
                                  label=f'Cluster {cluster_id}', color='red')
-                    # Add outline box around selected trace
-                    ax.add_patch(plt.Rectangle((0, y_pos - 0.3), len(time_axis), 0.6, 
+                    # Add outline box around selected trace (centered around y_pos, height=1.0)
+                    ax.add_patch(plt.Rectangle((0, y_pos - 0.5), len(time_axis), 1.0, 
                                              fill=False, edgecolor='red', linewidth=2, alpha=0.7))
                 else:
                     # Normal cluster trace
-                    line = ax.plot(time_axis, trace + y_pos, linewidth=1.5, 
+                    line = ax.plot(time_axis, trace_final, linewidth=1.5, 
                                  label=f'Cluster {cluster_id}', alpha=0.8)
                 
                 # Add cluster label
