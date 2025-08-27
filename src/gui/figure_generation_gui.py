@@ -2955,13 +2955,18 @@ class FigureGenerationGUI:
             # Store reference to main raster axis for potential later use
             self.inspection_ax = raster_ax
             
-            # Second quadrant (upper right) - Empty placeholder
-            placeholder_ax1 = self.inspection_fig.add_subplot(gs[0, 1])
-            placeholder_ax1.text(0.5, 0.5, 'Placeholder\nQuadrant 2', 
-                                ha='center', va='center', transform=placeholder_ax1.transAxes,
-                                fontsize=12, alpha=0.5)
-            placeholder_ax1.set_xticks([])
-            placeholder_ax1.set_yticks([])
+            # Second quadrant (upper right) - Principal Components
+            try:
+                self.create_pca_components_subplot(gs[0, 1], dataset_path, raster_file, 
+                                                 show_annotation, annotation_data)
+            except Exception as e:
+                # Fallback: show error in quadrant 2
+                error_ax = self.inspection_fig.add_subplot(gs[0, 1])
+                error_ax.text(0.5, 0.5, f'PCA subplot error:\n{str(e)}', 
+                            ha='center', va='center', transform=error_ax.transAxes,
+                            fontsize=10, color='red')
+                error_ax.set_xticks([])
+                error_ax.set_yticks([])
             
             # Third quadrant (lower left) - Empty placeholder
             placeholder_ax2 = self.inspection_fig.add_subplot(gs[1, 0])
@@ -3029,6 +3034,142 @@ class FigureGenerationGUI:
         except Exception as e:
             print(f"Error applying PCA sorting: {e}")
             return raster_matrix
+    
+    def create_pca_components_subplot(self, gridspec_location, dataset_path, raster_file, 
+                                    show_annotation, annotation_data):
+        """Create subplot showing the first 3 principal components."""
+        try:
+            # Extract suffix from raster file to find PCA folder
+            # e.g., "Raster_matrix_norm01.npy" -> "norm01"
+            if raster_file.startswith("processed/matrices/"):
+                raster_filename = os.path.basename(raster_file)
+            else:
+                raster_filename = raster_file
+            
+            if raster_filename.startswith("Raster_matrix_"):
+                suffix = raster_filename.replace("Raster_matrix_", "").replace(".npy", "")
+                pca_folder = f"PCA_{suffix}_columns"
+            else:
+                # Fallback - try to find any PCA folder
+                pca_base_dir = os.path.join(dataset_path, "processed", "pca")
+                if os.path.exists(pca_base_dir):
+                    pca_folders = [d for d in os.listdir(pca_base_dir) 
+                                 if os.path.isdir(os.path.join(pca_base_dir, d)) and d.endswith("_columns")]
+                    if pca_folders:
+                        pca_folder = pca_folders[0]  # Use the first available
+                    else:
+                        raise FileNotFoundError("No PCA folder found")
+                else:
+                    raise FileNotFoundError("PCA directory does not exist")
+            
+            # Construct path to transformed_data.npy
+            pca_dir = os.path.join(dataset_path, "processed", "pca", pca_folder)
+            transformed_data_path = os.path.join(pca_dir, "transformed_data.npy")
+            
+            if not os.path.exists(transformed_data_path):
+                # Show error message in quadrant 2
+                error_ax = self.inspection_fig.add_subplot(gridspec_location)
+                error_ax.text(0.5, 0.5, f'PCA data not found:\n{pca_folder}', 
+                            ha='center', va='center', transform=error_ax.transAxes,
+                            fontsize=10, color='red')
+                error_ax.set_xticks([])
+                error_ax.set_yticks([])
+                return
+            
+            # Load transformed data (principal components over time)
+            transformed_data = np.load(transformed_data_path)
+            
+            # Check if we have at least 3 components
+            if transformed_data.shape[1] < 3:
+                error_ax = self.inspection_fig.add_subplot(gridspec_location)
+                error_ax.text(0.5, 0.5, f'Need at least 3 PCs\nFound: {transformed_data.shape[1]}', 
+                            ha='center', va='center', transform=error_ax.transAxes,
+                            fontsize=10, color='red')
+                error_ax.set_xticks([])
+                error_ax.set_yticks([])
+                return
+            
+            # Create 3 vertically arranged subplots for the first 3 principal components
+            pc_gs = gridspec_location.subgridspec(3, 1, hspace=0.3)
+            
+            # Time axis (assuming it matches the raster matrix width)
+            time_points = np.arange(transformed_data.shape[0])
+            
+            component_names = ['PC1', 'PC2', 'PC3']
+            pc_axes = []
+            
+            for i in range(3):
+                ax = self.inspection_fig.add_subplot(pc_gs[i, 0])  # Changed back to vertical layout
+                pc_axes.append(ax)
+                
+                # Plot the principal component as a black line
+                ax.plot(time_points, transformed_data[:, i], 'k-', linewidth=1)
+                
+                # Add annotation overlay if enabled
+                if show_annotation and annotation_data is not None:
+                    self.add_annotation_overlay_to_pc(ax, annotation_data, 
+                                                    transformed_data[:, i].min(), 
+                                                    transformed_data[:, i].max())
+                
+                # Set labels and title
+                ax.set_ylabel(component_names[i], fontsize=10)
+                
+                # Only show x-label and ticks on bottom subplot
+                if i == 2:  # Bottom subplot
+                    ax.set_xlabel('Time', fontsize=10)
+                else:
+                    ax.set_xticks([])
+                
+                # Set title only on top subplot
+                if i == 0:
+                    ax.set_title('Principal Components', fontsize=12)
+                
+                # Adjust tick label size
+                ax.tick_params(axis='both', which='major', labelsize=8)
+            
+            # Link x-axes for synchronized zooming/panning
+            for i in range(1, 3):
+                pc_axes[i].sharex(pc_axes[0])
+                
+        except Exception as e:
+            # Show error message in quadrant 2
+            error_ax = self.inspection_fig.add_subplot(gridspec_location)
+            error_ax.text(0.5, 0.5, f'Error loading PCA data:\n{str(e)}', 
+                        ha='center', va='center', transform=error_ax.transAxes,
+                        fontsize=10, color='red')
+            error_ax.set_xticks([])
+            error_ax.set_yticks([])
+            print(f"Error creating PCA components subplot: {e}")
+    
+    def add_annotation_overlay_to_pc(self, ax, annotation_data, y_min, y_max):
+        """Add transparent rectangles over annotated regions for principal component plots."""
+        try:
+            # Find regions where annotation is 1
+            annotated_regions = np.where(annotation_data == 1)[0]
+            
+            if len(annotated_regions) == 0:
+                return
+            
+            # Group consecutive indices into regions
+            regions = []
+            start = annotated_regions[0]
+            end = annotated_regions[0]
+            
+            for i in range(1, len(annotated_regions)):
+                if annotated_regions[i] == annotated_regions[i-1] + 1:
+                    end = annotated_regions[i]
+                else:
+                    regions.append((start, end))
+                    start = annotated_regions[i]
+                    end = annotated_regions[i]
+            regions.append((start, end))
+            
+            # Add transparent rectangles for each region
+            for start, end in regions:
+                ax.axvspan(start, end + 1, alpha=0.2, color='red', zorder=0)
+                
+        except Exception as e:
+            print(f"Error adding annotation overlay to PC plot: {e}")
     
     def generate_matrix_visualization_figure(self):
         """Generate MatrixVisualization visualization."""
