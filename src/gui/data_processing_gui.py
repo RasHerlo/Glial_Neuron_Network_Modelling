@@ -489,14 +489,16 @@ class DataProcessingGUI:
                                                values=['PCA', 'LCA', 'SVD'], 
                                                state="readonly", width=20)
         self.dimred_method_combo.grid(row=2, column=1, padx=5)
+        self.dimred_method_combo.bind('<<ComboboxSelected>>', self.on_dimred_method_change)
         
-        # Parameters frame content (empty for now as requested)
-        placeholder_label = ttk.Label(parameters_frame, text="Parameters will be added in future steps", 
-                                     font=("Arial", 9), foreground="gray")
-        placeholder_label.pack(pady=20)
+        # Store reference to parameters frame for dynamic updates
+        self.dimred_parameters_frame = parameters_frame
         
         # Update matrix dropdown based on currently selected dataset
         self.update_dimred_matrix_dropdown()
+        
+        # Initialize parameters based on default selections
+        self.update_dimred_parameters()
     
     def update_dimred_matrix_dropdown(self):
         """Update matrix dropdown based on selected dataset for Dimensionality Reduction."""
@@ -527,11 +529,6 @@ class DataProcessingGUI:
                     self.param_vars['matrix'].set(preferred_matrices[0])
                     self.on_dimred_matrix_selection_change()
     
-    def on_dimred_matrix_selection_change(self, event=None):
-        """Handle matrix selection change for Dimensionality Reduction."""
-        # For now, no special handling needed when matrix selection changes
-        pass
-    
     def on_dimred_type_change(self, event=None):
         """Handle dimension reduction type change - update method dropdown."""
         dim_red_type = self.param_vars['dim_red_type'].get()
@@ -550,6 +547,82 @@ class DataProcessingGUI:
         # Set default method for the selected type
         if methods:
             self.param_vars['method'].set(methods[0])
+        
+        # Update parameters based on new method selection
+        self.update_dimred_parameters()
+    
+    def on_dimred_method_change(self, event=None):
+        """Handle method change - update parameters and filename."""
+        self.update_dimred_parameters()
+    
+    def update_dimred_parameters(self):
+        """Update the parameters frame based on current selections."""
+        if not hasattr(self, 'dimred_parameters_frame'):
+            return
+        
+        # Clear existing parameter widgets
+        for widget in self.dimred_parameters_frame.winfo_children():
+            widget.destroy()
+        
+        dim_red_type = self.param_vars.get('dim_red_type', tk.StringVar()).get()
+        method = self.param_vars.get('method', tk.StringVar()).get()
+        
+        if dim_red_type == 'Linear' and method == 'PCA':
+            self.create_pca_parameters()
+        else:
+            # Placeholder for other methods
+            placeholder_label = ttk.Label(self.dimred_parameters_frame, 
+                                        text=f"Parameters for {method} will be added in future steps", 
+                                        font=("Arial", 9), foreground="gray")
+            placeholder_label.pack(pady=20)
+    
+    def create_pca_parameters(self):
+        """Create PCA-specific parameter widgets."""
+        # Dimension dropdown (rows or columns)
+        ttk.Label(self.dimred_parameters_frame, text="Dimension:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['pca_dimension'] = tk.StringVar(value='columns')
+        self.pca_dimension_combo = ttk.Combobox(self.dimred_parameters_frame, 
+                                               textvariable=self.param_vars['pca_dimension'],
+                                               values=['rows', 'columns'], 
+                                               state="readonly", width=15)
+        self.pca_dimension_combo.grid(row=0, column=1, padx=5, pady=2)
+        self.pca_dimension_combo.bind('<<ComboboxSelected>>', self.on_pca_dimension_change)
+        
+        # Output filename
+        ttk.Label(self.dimred_parameters_frame, text="Output Filename:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['pca_output_filename'] = tk.StringVar()
+        ttk.Entry(self.dimred_parameters_frame, textvariable=self.param_vars['pca_output_filename'], 
+                 width=25).grid(row=1, column=1, padx=5, pady=2)
+        
+        # Generate default filename
+        self.update_pca_filename()
+    
+    def on_pca_dimension_change(self, event=None):
+        """Handle PCA dimension change - update filename."""
+        self.update_pca_filename()
+    
+    def update_pca_filename(self):
+        """Update PCA output filename based on current selections."""
+        matrix_name = self.param_vars.get('matrix', tk.StringVar()).get()
+        dimension = self.param_vars.get('pca_dimension', tk.StringVar()).get()
+        
+        if matrix_name and dimension:
+            # Extract suffix from matrix name (e.g., 'norm01' from 'Raster_matrix_norm01')
+            matrix_parts = matrix_name.split('_')
+            if len(matrix_parts) >= 3:
+                suffix = matrix_parts[-1]  # Last part after underscore
+            else:
+                suffix = 'matrix'
+            
+            # Generate filename: PCA_suffix_dimension
+            filename = f"PCA_{suffix}_{dimension}"
+            self.param_vars['pca_output_filename'].set(filename)
+    
+    def on_dimred_matrix_selection_change(self, event=None):
+        """Handle matrix selection change for Dimensionality Reduction."""
+        # Update filename when matrix selection changes
+        if hasattr(self, 'param_vars') and 'pca_output_filename' in self.param_vars:
+            self.update_pca_filename()
     
     def create_indexing_params(self):
         """Create parameter widgets for Indexing."""
