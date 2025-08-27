@@ -7,7 +7,10 @@ import numpy as np
 from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime
 import os
+import json
 from pathlib import Path
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 from ..database.operations import DatasetOperations, ProcessingJobOperations
 
@@ -1668,8 +1671,8 @@ class DimensionalityReductionProcessor(BaseProcessor):
         """Return progress step descriptions for Dimensionality Reduction."""
         return [
             "Loading matrix data",
-            "Preparing data for analysis", 
-            "Applying dimensionality reduction",
+            "Preprocessing data", 
+            "Computing PCA",
             "Saving results",
             "Completed"
         ]
@@ -1711,6 +1714,16 @@ class DimensionalityReductionProcessor(BaseProcessor):
         if method not in valid_methods[dim_red_type]:
             return False
         
+        # PCA-specific validation
+        if dim_red_type == 'Linear' and method == 'PCA':
+            pca_dimension = parameters.get('pca_dimension')
+            if pca_dimension not in ['rows', 'columns']:
+                return False
+            
+            pca_output_filename = parameters.get('pca_output_filename')
+            if not pca_output_filename or not pca_output_filename.strip():
+                return False
+        
         return True
     
     def process_with_progress(self, parameters: Dict[str, Any] = None, 
@@ -1732,10 +1745,34 @@ class DimensionalityReductionProcessor(BaseProcessor):
             dim_red_type = parameters.get('dim_red_type')
             method = parameters.get('method')
             
-            if progress_callback:
-                progress_callback(20.0)
+            # Route to appropriate method
+            if dim_red_type == 'Linear' and method == 'PCA':
+                return self.process_pca(parameters, progress_callback)
+            else:
+                return {
+                    'success': False,
+                    'message': f'Method {method} ({dim_red_type}) is not yet implemented'
+                }
             
-            # Load matrix data
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Dimensionality reduction failed: {str(e)}'
+            }
+    
+    def process_pca(self, parameters: Dict[str, Any], 
+                   progress_callback: Callable[[float], None] = None) -> Dict[str, Any]:
+        """Process PCA analysis with progress updates."""
+        try:
+            dataset_name = parameters.get('dataset_name')
+            matrix_name = parameters.get('matrix')
+            pca_dimension = parameters.get('pca_dimension', 'columns')
+            output_filename = parameters.get('pca_output_filename', 'PCA_analysis')
+            
+            # Step 1: Loading matrix data (0-20%)
+            if progress_callback:
+                progress_callback(0.0)
+            
             matrix_path = os.path.join("data", "datasets", dataset_name, 
                                      "processed", "matrices", f"{matrix_name}.npy")
             
@@ -1745,21 +1782,153 @@ class DimensionalityReductionProcessor(BaseProcessor):
                     'message': f'Matrix file not found: {matrix_path}'
                 }
             
-            # For now, just return success with placeholder message
-            # The actual implementation will be added in later steps
+            # Load the matrix
+            matrix = np.load(matrix_path)
+            
+            # Validate matrix dimensions
+            if matrix.size == 0:
+                return {
+                    'success': False,
+                    'message': 'Matrix is empty'
+                }
+            
+            if matrix.ndim != 2:
+                return {
+                    'success': False,
+                    'message': f'Matrix must be 2D, got {matrix.ndim}D'
+                }
+            
+            rows, cols = matrix.shape
+            if rows < 2 or cols < 2:
+                return {
+                    'success': False,
+                    'message': f'Matrix too small for PCA: {rows}x{cols}'
+                }
+            
+            if progress_callback:
+                progress_callback(20.0)
+            
+            # Step 2: Preprocessing data (20-40%)
+            # Prepare data based on dimension selection
+            if pca_dimension == 'columns':
+                # PCA in column space: transpose so each column becomes a sample
+                data = matrix.T  # Shape: (cols, rows)
+                analysis_info = f"PCA in column space: analyzing {cols} columns with {rows} features each"
+            else:  # rows
+                # PCA in row space: each row is a sample
+                data = matrix  # Shape: (rows, cols)
+                analysis_info = f"PCA in row space: analyzing {rows} rows with {cols} features each"
+            
+            # Check if we have enough samples for PCA
+            n_samples, n_features = data.shape
+            if n_samples < 2:
+                return {
+                    'success': False,
+                    'message': f'Need at least 2 samples for PCA, got {n_samples}'
+                }
+            
+            # Center and standardize the data
+            scaler = StandardScaler()
+            data_scaled = scaler.fit_transform(data)
+            
+            if progress_callback:
+                progress_callback(40.0)
+            
+            # Step 3: Computing PCA (40-70%)
+            # Initialize PCA with all components
+            n_components = min(n_samples, n_features)
+            pca = PCA(n_components=n_components)
+            
+            # Fit PCA and transform data
+            transformed_data = pca.fit_transform(data_scaled)
+            
+            if progress_callback:
+                progress_callback(70.0)
+            
+            # Step 4: Saving results (70-90%)
+            # Create output directory
+            output_dir = os.path.join("data", "datasets", dataset_name, 
+                                    "processed", "pca", output_filename)
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Save principal components
+            np.save(os.path.join(output_dir, "principal_components.npy"), pca.components_)
+            
+            # Save explained variance
+            np.save(os.path.join(output_dir, "explained_variance.npy"), pca.explained_variance_)
+            
+            # Save explained variance ratio
+            np.save(os.path.join(output_dir, "explained_variance_ratio.npy"), pca.explained_variance_ratio_)
+            
+            # Save cumulative variance
+            cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
+            np.save(os.path.join(output_dir, "cumulative_variance.npy"), cumulative_variance)
+            
+            # Save transformed data (data projected onto PCs)
+            np.save(os.path.join(output_dir, "transformed_data.npy"), transformed_data)
+            
+            # Save loadings (components transposed for easier interpretation)
+            loadings = pca.components_.T
+            np.save(os.path.join(output_dir, "loadings.npy"), loadings)
+            
+            # Save scaler parameters
+            scaler_params = {
+                'mean': scaler.mean_.tolist(),
+                'scale': scaler.scale_.tolist()
+            }
+            
+            # Create summary CSV
+            summary_data = {
+                'Component': [f'PC{i+1}' for i in range(len(pca.explained_variance_))],
+                'Explained_Variance': pca.explained_variance_.tolist(),
+                'Explained_Variance_Ratio': pca.explained_variance_ratio_.tolist(),
+                'Cumulative_Variance_Ratio': cumulative_variance.tolist()
+            }
+            summary_df = pd.DataFrame(summary_data)
+            summary_df.to_csv(os.path.join(output_dir, "pca_summary.csv"), index=False)
+            
+            # Save parameters and metadata
+            pca_metadata = {
+                'analysis_info': analysis_info,
+                'original_matrix': matrix_name,
+                'original_shape': [int(rows), int(cols)],
+                'analysis_dimension': pca_dimension,
+                'data_shape_for_pca': [int(n_samples), int(n_features)],
+                'n_components': int(n_components),
+                'total_explained_variance_ratio': float(cumulative_variance[-1]),
+                'scaler_parameters': scaler_params,
+                'processing_parameters': {
+                    'dim_red_type': parameters.get('dim_red_type'),
+                    'method': parameters.get('method'),
+                    'pca_dimension': pca_dimension,
+                    'output_filename': output_filename
+                },
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            with open(os.path.join(output_dir, "pca_parameters.json"), 'w') as f:
+                json.dump(pca_metadata, f, indent=2)
+            
+            if progress_callback:
+                progress_callback(90.0)
+            
+            # Step 5: Completed (90-100%)
             if progress_callback:
                 progress_callback(100.0)
             
             return {
                 'success': True,
-                'message': f'Dimensionality reduction setup completed for {method} on {matrix_name}. Implementation coming soon.',
-                'output_path': f"data/datasets/{dataset_name}/processed/pca/"
+                'message': f'PCA analysis completed successfully. {n_components} components extracted, explaining {cumulative_variance[-1]:.1%} of total variance.',
+                'output_path': output_dir,
+                'analysis_info': analysis_info,
+                'n_components': n_components,
+                'total_variance_explained': float(cumulative_variance[-1])
             }
             
         except Exception as e:
             return {
                 'success': False,
-                'message': f'Dimensionality reduction failed: {str(e)}'
+                'message': f'PCA analysis failed: {str(e)}'
             }
 
 

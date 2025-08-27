@@ -1148,6 +1148,18 @@ class DataProcessingGUI:
             if not method:
                 messagebox.showwarning("Missing Method", "Please select a dimensionality reduction method.")
                 return
+            
+            # Additional validation for PCA
+            if dim_red_type == 'Linear' and method == 'PCA':
+                pca_dimension = self.param_vars.get('pca_dimension', tk.StringVar()).get()
+                if not pca_dimension:
+                    messagebox.showwarning("Missing PCA Dimension", "Please select PCA dimension (rows or columns).")
+                    return
+                
+                pca_output_filename = self.param_vars.get('pca_output_filename', tk.StringVar()).get().strip()
+                if not pca_output_filename:
+                    messagebox.showwarning("Missing Output Filename", "Please provide an output filename for PCA analysis.")
+                    return
         
         try:
             # Collect parameters
