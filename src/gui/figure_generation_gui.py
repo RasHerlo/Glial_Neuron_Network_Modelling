@@ -22,6 +22,7 @@ try:
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     from matplotlib.figure import Figure
     from matplotlib.widgets import Slider
+    from mpl_toolkits.mplot3d import Axes3D
     import seaborn as sns
     from scipy.cluster.hierarchy import dendrogram
     MATPLOTLIB_AVAILABLE = True
@@ -2980,13 +2981,18 @@ class FigureGenerationGUI:
                 error_ax.set_xticks([])
                 error_ax.set_yticks([])
             
-            # Fourth quadrant (lower right) - Empty placeholder
-            placeholder_ax3 = self.inspection_fig.add_subplot(gs[1, 1])
-            placeholder_ax3.text(0.5, 0.5, 'Placeholder\nQuadrant 4', 
-                                ha='center', va='center', transform=placeholder_ax3.transAxes,
-                                fontsize=12, alpha=0.5)
-            placeholder_ax3.set_xticks([])
-            placeholder_ax3.set_yticks([])
+            # Fourth quadrant (lower right) - 3D PCA Trajectory
+            try:
+                self.create_3d_pca_trajectory_subplot(gs[1, 1], dataset_path, raster_file, 
+                                                    show_annotation, annotation_data)
+            except Exception as e:
+                # Fallback: show error in quadrant 4
+                error_ax = self.inspection_fig.add_subplot(gs[1, 1])
+                error_ax.text(0.5, 0.5, f'3D plot error:\n{str(e)}', 
+                            ha='center', va='center', transform=error_ax.transAxes,
+                            fontsize=10, color='red')
+                error_ax.set_xticks([])
+                error_ax.set_yticks([])
             
         except Exception as e:
             # Create a temporary axis for error display if it doesn't exist
@@ -3273,6 +3279,126 @@ class FigureGenerationGUI:
             error_ax.set_xticks([])
             error_ax.set_yticks([])
             print(f"Error creating explained variance subplot: {e}")
+    
+    def create_3d_pca_trajectory_subplot(self, gridspec_location, dataset_path, raster_file, 
+                                       show_annotation, annotation_data):
+        """Create 3D trajectory plot using first 3 principal components."""
+        try:
+            # Extract suffix from raster file to find PCA folder (same logic as other methods)
+            if raster_file.startswith("processed/matrices/"):
+                raster_filename = os.path.basename(raster_file)
+            else:
+                raster_filename = raster_file
+            
+            if raster_filename.startswith("Raster_matrix_"):
+                suffix = raster_filename.replace("Raster_matrix_", "").replace(".npy", "")
+                pca_folder = f"PCA_{suffix}_columns"
+            else:
+                # Fallback - try to find any PCA folder
+                pca_base_dir = os.path.join(dataset_path, "processed", "pca")
+                if os.path.exists(pca_base_dir):
+                    pca_folders = [d for d in os.listdir(pca_base_dir) 
+                                 if os.path.isdir(os.path.join(pca_base_dir, d)) and d.endswith("_columns")]
+                    if pca_folders:
+                        pca_folder = pca_folders[0]  # Use the first available
+                    else:
+                        raise FileNotFoundError("No PCA folder found")
+                else:
+                    raise FileNotFoundError("PCA directory does not exist")
+            
+            # Construct path to transformed_data.npy
+            pca_dir = os.path.join(dataset_path, "processed", "pca", pca_folder)
+            transformed_data_path = os.path.join(pca_dir, "transformed_data.npy")
+            
+            if not os.path.exists(transformed_data_path):
+                # Show error message in quadrant 4
+                error_ax = self.inspection_fig.add_subplot(gridspec_location)
+                error_ax.text(0.5, 0.5, f'PCA data not found:\n{pca_folder}', 
+                            ha='center', va='center', transform=error_ax.transAxes,
+                            fontsize=10, color='red')
+                error_ax.set_xticks([])
+                error_ax.set_yticks([])
+                return
+            
+            # Load transformed data (principal components over time)
+            transformed_data = np.load(transformed_data_path)
+            
+            # Check if we have at least 3 components
+            if transformed_data.shape[1] < 3:
+                error_ax = self.inspection_fig.add_subplot(gridspec_location)
+                error_ax.text(0.5, 0.5, f'Need at least 3 PCs for 3D plot\nFound: {transformed_data.shape[1]}', 
+                            ha='center', va='center', transform=error_ax.transAxes,
+                            fontsize=10, color='red')
+                error_ax.set_xticks([])
+                error_ax.set_yticks([])
+                return
+            
+            # Extract first 3 principal components
+            pc1 = transformed_data[:, 0]
+            pc2 = transformed_data[:, 1]
+            pc3 = transformed_data[:, 2]
+            
+            # Create 3D subplot and then adjust its position to make it larger
+            ax = self.inspection_fig.add_subplot(gridspec_location, projection='3d')
+            
+            # Get the current position and enlarge it by 30%
+            pos = ax.get_position()
+            # Calculate new position with 15% expansion on each side
+            new_width = pos.width * 1.3
+            new_height = pos.height * 1.3
+            new_x = pos.x0 - (new_width - pos.width) / 2
+            new_y = pos.y0 - (new_height - pos.height) / 2
+            
+            # Set the new enlarged position
+            ax.set_position([new_x, new_y, new_width, new_height])
+            
+            # Determine coloring based on annotation
+            if show_annotation and annotation_data is not None:
+                # Create color array: black for non-annotated, light red for annotated
+                colors = np.where(annotation_data == 1, 'lightcoral', 'black')
+                
+                # Plot trajectory with segment-based coloring
+                # We'll plot each segment individually to handle color changes
+                for i in range(len(pc1) - 1):
+                    # Plot line segment from point i to point i+1
+                    ax.plot([pc1[i], pc1[i+1]], 
+                           [pc2[i], pc2[i+1]], 
+                           [pc3[i], pc3[i+1]], 
+                           color=colors[i], linewidth=1, alpha=0.8)
+            else:
+                # Plot entire trajectory in black
+                ax.plot(pc1, pc2, pc3, color='black', linewidth=1, alpha=0.8)
+            
+            # Add start and end markers
+            ax.scatter([pc1[0]], [pc2[0]], [pc3[0]], color='green', s=50, alpha=0.8, label='Start')
+            ax.scatter([pc1[-1]], [pc2[-1]], [pc3[-1]], color='red', s=50, alpha=0.8, label='End')
+            
+            # Set labels (no title to save space)
+            ax.set_xlabel('PC1', fontsize=9)
+            ax.set_ylabel('PC2', fontsize=9)
+            ax.set_zlabel('PC3', fontsize=9)
+            
+            # Add legend
+            ax.legend(fontsize=8)
+            
+            # Adjust tick label size
+            ax.tick_params(axis='both', which='major', labelsize=7)
+            
+            # Set a good initial viewing angle
+            ax.view_init(elev=20, azim=45)
+            
+            # Enable mouse interaction for rotation (this is automatic with matplotlib 3D plots)
+            # The plot will be interactive when displayed in the GUI
+            
+        except Exception as e:
+            # Show error message in quadrant 4
+            error_ax = self.inspection_fig.add_subplot(gridspec_location)
+            error_ax.text(0.5, 0.5, f'Error creating 3D plot:\n{str(e)}', 
+                        ha='center', va='center', transform=error_ax.transAxes,
+                        fontsize=10, color='red')
+            error_ax.set_xticks([])
+            error_ax.set_yticks([])
+            print(f"Error creating 3D PCA trajectory subplot: {e}")
     
     def generate_matrix_visualization_figure(self):
         """Generate MatrixVisualization visualization."""
