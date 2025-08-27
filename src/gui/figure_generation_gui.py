@@ -2968,13 +2968,17 @@ class FigureGenerationGUI:
                 error_ax.set_xticks([])
                 error_ax.set_yticks([])
             
-            # Third quadrant (lower left) - Empty placeholder
-            placeholder_ax2 = self.inspection_fig.add_subplot(gs[1, 0])
-            placeholder_ax2.text(0.5, 0.5, 'Placeholder\nQuadrant 3', 
-                                ha='center', va='center', transform=placeholder_ax2.transAxes,
-                                fontsize=12, alpha=0.5)
-            placeholder_ax2.set_xticks([])
-            placeholder_ax2.set_yticks([])
+            # Third quadrant (lower left) - Explained Variance Ratio
+            try:
+                self.create_explained_variance_subplot(gs[1, 0], dataset_path, raster_file)
+            except Exception as e:
+                # Fallback: show error in quadrant 3
+                error_ax = self.inspection_fig.add_subplot(gs[1, 0])
+                error_ax.text(0.5, 0.5, f'Variance plot error:\n{str(e)}', 
+                            ha='center', va='center', transform=error_ax.transAxes,
+                            fontsize=10, color='red')
+                error_ax.set_xticks([])
+                error_ax.set_yticks([])
             
             # Fourth quadrant (lower right) - Empty placeholder
             placeholder_ax3 = self.inspection_fig.add_subplot(gs[1, 1])
@@ -3170,6 +3174,105 @@ class FigureGenerationGUI:
                 
         except Exception as e:
             print(f"Error adding annotation overlay to PC plot: {e}")
+    
+    def create_explained_variance_subplot(self, gridspec_location, dataset_path, raster_file):
+        """Create subplot showing explained variance ratio bar plot for first 10 components."""
+        try:
+            # Extract suffix from raster file to find PCA folder (same logic as components)
+            if raster_file.startswith("processed/matrices/"):
+                raster_filename = os.path.basename(raster_file)
+            else:
+                raster_filename = raster_file
+            
+            if raster_filename.startswith("Raster_matrix_"):
+                suffix = raster_filename.replace("Raster_matrix_", "").replace(".npy", "")
+                pca_folder = f"PCA_{suffix}_columns"
+            else:
+                # Fallback - try to find any PCA folder
+                pca_base_dir = os.path.join(dataset_path, "processed", "pca")
+                if os.path.exists(pca_base_dir):
+                    pca_folders = [d for d in os.listdir(pca_base_dir) 
+                                 if os.path.isdir(os.path.join(pca_base_dir, d)) and d.endswith("_columns")]
+                    if pca_folders:
+                        pca_folder = pca_folders[0]  # Use the first available
+                    else:
+                        raise FileNotFoundError("No PCA folder found")
+                else:
+                    raise FileNotFoundError("PCA directory does not exist")
+            
+            # Construct path to explained_variance_ratio.npy
+            pca_dir = os.path.join(dataset_path, "processed", "pca", pca_folder)
+            variance_ratio_path = os.path.join(pca_dir, "explained_variance_ratio.npy")
+            
+            if not os.path.exists(variance_ratio_path):
+                # Show error message in quadrant 3
+                error_ax = self.inspection_fig.add_subplot(gridspec_location)
+                error_ax.text(0.5, 0.5, f'Variance data not found:\n{pca_folder}', 
+                            ha='center', va='center', transform=error_ax.transAxes,
+                            fontsize=10, color='red')
+                error_ax.set_xticks([])
+                error_ax.set_yticks([])
+                return
+            
+            # Load explained variance ratio data
+            explained_variance_ratio = np.load(variance_ratio_path)
+            
+            # Take first 10 components (or all if less than 10)
+            n_components = min(10, len(explained_variance_ratio))
+            variance_data = explained_variance_ratio[:n_components]
+            
+            # Create the subplot
+            ax = self.inspection_fig.add_subplot(gridspec_location)
+            
+            # Create component labels (PC1, PC2, ..., PC10)
+            component_labels = [f'PC{i+1}' for i in range(n_components)]
+            x_positions = np.arange(n_components)
+            
+            # Create bar colors: first 3 black, rest white
+            bar_colors = ['black' if i < 3 else 'white' for i in range(n_components)]
+            bar_edges = ['black'] * n_components  # All bars have black edges
+            
+            # Create the bar plot
+            bars = ax.bar(x_positions, variance_data, color=bar_colors, 
+                         edgecolor=bar_edges, linewidth=1)
+            
+            # Add dotted vertical line after PC3 (between PC3 and PC4)
+            if n_components > 3:
+                ax.axvline(x=2.5, color='black', linestyle=':', linewidth=1.5, alpha=0.8)
+            
+            # Customize the plot
+            ax.set_xlabel('Principal Components', fontsize=10)
+            ax.set_ylabel('Explained Variance Ratio', fontsize=10)
+            ax.set_title('Explained Variance Ratio', fontsize=12)
+            
+            # Set x-axis labels
+            ax.set_xticks(x_positions)
+            ax.set_xticklabels(component_labels, fontsize=9)
+            
+            # Adjust y-axis to start from 0
+            ax.set_ylim(bottom=0)
+            
+            # Add grid for better readability
+            ax.grid(True, alpha=0.3, axis='y')
+            
+            # Adjust tick label size
+            ax.tick_params(axis='both', which='major', labelsize=8)
+            
+            # Optional: Add percentage labels on top of bars
+            for i, (bar, value) in enumerate(zip(bars, variance_data)):
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height + 0.001,
+                       f'{value:.1%}', ha='center', va='bottom', fontsize=7)
+                
+        except Exception as e:
+            # Show error message in quadrant 3
+            error_ax = self.inspection_fig.add_subplot(gridspec_location)
+            error_ax.text(0.5, 0.5, f'Error loading variance data:\n{str(e)}', 
+                        ha='center', va='center', transform=error_ax.transAxes,
+                        fontsize=10, color='red')
+            error_ax.set_xticks([])
+            error_ax.set_yticks([])
+            print(f"Error creating explained variance subplot: {e}")
     
     def generate_matrix_visualization_figure(self):
         """Generate MatrixVisualization visualization."""
