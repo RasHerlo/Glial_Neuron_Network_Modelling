@@ -126,6 +126,12 @@ class FigureGenerationGUI:
         self.figure_canvas = None
         self.mode_controls_frame = None
         
+        # Initialize threshold-related variables (used by dendrogram functionality)
+        self.threshold_update_after_id = None
+        self.current_threshold = tk.DoubleVar(value=0.0)
+        self.cluster_count = tk.StringVar(value="N/A")
+        self.avg_cluster_size = tk.StringVar(value="N/A")
+        
         # Check matplotlib availability
         if not MATPLOTLIB_AVAILABLE:
             messagebox.showwarning("Missing Dependencies", 
@@ -1711,17 +1717,14 @@ class FigureGenerationGUI:
 
     def create_dendrogram_controls(self, parent_frame):
         """Create Dendrogram-specific controls."""
-        # Initialize dendrogram control variables
+        # Initialize dendrogram control variables (threshold variables are now in __init__)
         self.dendrogram_log_axis = tk.BooleanVar(value=False)
-        self.current_threshold = tk.DoubleVar(value=0.0)
-        self.cluster_count = tk.StringVar(value="N/A")
-        self.avg_cluster_size = tk.StringVar(value="N/A")
         
         # Initialize threshold-related instance variables
         self.threshold_slider = None
         self.threshold_line = None
         self.current_linkage_matrix = None
-        self.threshold_update_after_id = None  # For debouncing
+        # Note: threshold_update_after_id is now initialized in __init__
         
         # Log/Lin X-axis toggle
         ttk.Label(parent_frame, text="Log/Lin X-axis:").grid(row=0, column=0, sticky="w", padx=5)
@@ -2078,21 +2081,36 @@ class FigureGenerationGUI:
                             except Exception as e:
                                 print(f"Error reading column labels file {column_label_files[0]}: {e}")
             
-            # Update dropdowns
-            self.row_sorting_vector_combo['values'] = row_sorting_options
-            self.column_sorting_vector_combo['values'] = column_sorting_options
+            # Update dropdowns with safety checks
+            if hasattr(self, 'row_sorting_vector_combo') and self.row_sorting_vector_combo.winfo_exists():
+                try:
+                    self.row_sorting_vector_combo['values'] = row_sorting_options
+                except tk.TclError:
+                    # Widget might be destroyed, skip update
+                    pass
+            
+            if hasattr(self, 'column_sorting_vector_combo') and self.column_sorting_vector_combo.winfo_exists():
+                try:
+                    self.column_sorting_vector_combo['values'] = column_sorting_options
+                except tk.TclError:
+                    # Widget might be destroyed, skip update
+                    pass
             
             # Update PCA manifold sorting dropdown if it exists
-            if hasattr(self, 'pca_row_sorting_vector_combo'):
-                self.pca_row_sorting_vector_combo['values'] = row_sorting_options
-                # Clear current selection if it's no longer valid
-                if self.pca_row_sorting_vector.get() not in row_sorting_options:
-                    self.pca_row_sorting_vector.set('')
+            if hasattr(self, 'pca_row_sorting_vector_combo') and self.pca_row_sorting_vector_combo.winfo_exists():
+                try:
+                    self.pca_row_sorting_vector_combo['values'] = row_sorting_options
+                    # Clear current selection if it's no longer valid
+                    if hasattr(self, 'pca_row_sorting_vector') and self.pca_row_sorting_vector.get() not in row_sorting_options:
+                        self.pca_row_sorting_vector.set('')
+                except tk.TclError:
+                    # Widget might be destroyed, skip update
+                    pass
             
-            # Clear current selections if they're no longer valid
-            if self.row_sorting_vector_var.get() not in row_sorting_options:
+            # Clear current selections if they're no longer valid (with safety checks)
+            if hasattr(self, 'row_sorting_vector_var') and self.row_sorting_vector_var.get() not in row_sorting_options:
                 self.row_sorting_vector_var.set('')
-            if self.column_sorting_vector_var.get() not in column_sorting_options:
+            if hasattr(self, 'column_sorting_vector_var') and self.column_sorting_vector_var.get() not in column_sorting_options:
                 self.column_sorting_vector_var.set('')
             
             # Update dendrogram toggle state after updating sorting vectors
@@ -2100,11 +2118,21 @@ class FigureGenerationGUI:
             
         except Exception as e:
             print(f"Error updating sorting vectors from labels: {e}")
-            # Clear dropdowns on error
-            self.row_sorting_vector_combo['values'] = []
-            self.column_sorting_vector_combo['values'] = []
-            self.row_sorting_vector_var.set('')
-            self.column_sorting_vector_var.set('')
+            # Clear dropdowns on error with safety checks
+            if hasattr(self, 'row_sorting_vector_combo') and self.row_sorting_vector_combo.winfo_exists():
+                try:
+                    self.row_sorting_vector_combo['values'] = []
+                except tk.TclError:
+                    pass
+            if hasattr(self, 'column_sorting_vector_combo') and self.column_sorting_vector_combo.winfo_exists():
+                try:
+                    self.column_sorting_vector_combo['values'] = []
+                except tk.TclError:
+                    pass
+            if hasattr(self, 'row_sorting_vector_var'):
+                self.row_sorting_vector_var.set('')
+            if hasattr(self, 'column_sorting_vector_var'):
+                self.column_sorting_vector_var.set('')
             # Update dendrogram toggle state after clearing vectors
             self.update_dendrogram_toggle_state()
     
