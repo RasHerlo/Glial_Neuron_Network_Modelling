@@ -1528,8 +1528,8 @@ class FigureGenerationGUI:
     
     def on_required_file_change(self, event=None):
         """Handle changes in required file selections."""
-        # Update sorting vectors when label files change (for RasterPlot and MatrixVisualization modes)
-        if hasattr(self, 'selected_mode') and (self.selected_mode == "RasterPlot" or self.selected_mode == "MatrixVisualization"):
+        # Update sorting vectors when label files change (for RasterPlot, MatrixVisualization, and PCAManifold modes)
+        if hasattr(self, 'selected_mode') and (self.selected_mode == "RasterPlot" or self.selected_mode == "MatrixVisualization" or self.selected_mode == "PCAManifold"):
             self.update_sorting_vectors_from_labels()
         
         # Check if all required files are selected
