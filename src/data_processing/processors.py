@@ -1650,6 +1650,119 @@ class HierarchicalClusteringProcessor(BaseProcessor):
             }
 
 
+class DimensionalityReductionProcessor(BaseProcessor):
+    """Processor for dimensionality reduction analysis of matrices."""
+    
+    def __init__(self):
+        super().__init__("Dimensionality Reduction")
+        self.description = "Perform dimensionality reduction analysis on matrices using various methods"
+    
+    def get_default_parameters(self) -> Dict[str, Any]:
+        return {
+            'matrix': '',
+            'dim_red_type': 'Linear',
+            'method': 'PCA'
+        }
+    
+    def get_progress_steps(self) -> List[str]:
+        """Return progress step descriptions for Dimensionality Reduction."""
+        return [
+            "Loading matrix data",
+            "Preparing data for analysis", 
+            "Applying dimensionality reduction",
+            "Saving results",
+            "Completed"
+        ]
+    
+    def find_matrix_files(self, dataset_name: str) -> List[str]:
+        """Find available matrix files for the given dataset."""
+        matrix_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+        
+        if not os.path.exists(matrix_dir):
+            return []
+        
+        matrix_files = []
+        for file in os.listdir(matrix_dir):
+            if file.endswith('.npy') and 'Raster_matrix' in file:
+                # Extract the matrix name without extension
+                matrix_name = os.path.splitext(file)[0]
+                matrix_files.append(matrix_name)
+        
+        return sorted(matrix_files)
+    
+    def validate_parameters(self, parameters: Dict[str, Any]) -> bool:
+        """Validate dimensionality reduction parameters."""
+        if not parameters.get('matrix'):
+            return False
+        
+        dim_red_type = parameters.get('dim_red_type')
+        method = parameters.get('method')
+        
+        # Validate method based on dimension reduction type
+        valid_methods = {
+            'Linear': ['PCA', 'LCA', 'SVD'],
+            'Non-Linear': ['t-SNE', 'UMAP'],
+            'Other': ['CNMF']
+        }
+        
+        if dim_red_type not in valid_methods:
+            return False
+        
+        if method not in valid_methods[dim_red_type]:
+            return False
+        
+        return True
+    
+    def process_with_progress(self, parameters: Dict[str, Any] = None, 
+                            progress_callback: Callable[[float], None] = None) -> Dict[str, Any]:
+        """Process dimensionality reduction with progress updates."""
+        try:
+            if progress_callback:
+                progress_callback(0.0)
+            
+            # Validate parameters
+            if not self.validate_parameters(parameters):
+                return {
+                    'success': False,
+                    'message': 'Invalid parameters for dimensionality reduction'
+                }
+            
+            dataset_name = parameters.get('dataset_name')
+            matrix_name = parameters.get('matrix')
+            dim_red_type = parameters.get('dim_red_type')
+            method = parameters.get('method')
+            
+            if progress_callback:
+                progress_callback(20.0)
+            
+            # Load matrix data
+            matrix_path = os.path.join("data", "datasets", dataset_name, 
+                                     "processed", "matrices", f"{matrix_name}.npy")
+            
+            if not os.path.exists(matrix_path):
+                return {
+                    'success': False,
+                    'message': f'Matrix file not found: {matrix_path}'
+                }
+            
+            # For now, just return success with placeholder message
+            # The actual implementation will be added in later steps
+            if progress_callback:
+                progress_callback(100.0)
+            
+            return {
+                'success': True,
+                'message': f'Dimensionality reduction setup completed for {method} on {matrix_name}. Implementation coming soon.',
+                'output_path': f"data/datasets/{dataset_name}/processed/pca/"
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Dimensionality reduction failed: {str(e)}'
+            }
+
+
 class DataProcessingManager:
     """Manager class for coordinating different data processors."""
     
@@ -1660,7 +1773,8 @@ class DataProcessingManager:
             'Data Annotation': DataAnnotationProcessor(),
             'Indexing': IndexingProcessor(),
             'Ruzicka Similarity': RuzickaSimilarityProcessor(),
-            'Hierarchical Clustering': HierarchicalClusteringProcessor()
+            'Hierarchical Clustering': HierarchicalClusteringProcessor(),
+            'Dimensionality Reduction': DimensionalityReductionProcessor()
         }
     
     def get_processor(self, processor_name: str) -> Optional[BaseProcessor]:

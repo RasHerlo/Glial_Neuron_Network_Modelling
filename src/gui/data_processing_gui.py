@@ -445,6 +445,112 @@ class DataProcessingGUI:
                 print(f"Error updating dimension dropdown: {e}")
                 self.dimension_combo['values'] = ["rows = 1215", "columns = 1000"]
     
+    def create_dimensionality_reduction_params(self):
+        """Create parameter widgets for Dimensionality Reduction."""
+        # Clear existing params
+        for widget in self.params_frame.winfo_children():
+            widget.destroy()
+        self.param_vars.clear()
+        
+        # Create main container with two columns
+        main_frame = ttk.Frame(self.params_frame)
+        main_frame.pack(fill="both", expand=True)
+        
+        # Left side - Operation parameters
+        operation_frame = ttk.LabelFrame(main_frame, text="Operation", padding=5)
+        operation_frame.pack(side="left", fill="y", padx=(0, 5))
+        
+        # Right side - Parameters (empty for now)
+        parameters_frame = ttk.LabelFrame(main_frame, text="Parameters", padding=5)
+        parameters_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
+        
+        # Operation frame content
+        # Raster dropdown (will be populated based on selected dataset)
+        ttk.Label(operation_frame, text="Raster:").grid(row=0, column=0, sticky="w", padx=5)
+        self.param_vars['matrix'] = tk.StringVar()
+        self.dimred_matrix_combo = ttk.Combobox(operation_frame, textvariable=self.param_vars['matrix'],
+                                               values=[], state="readonly", width=20)
+        self.dimred_matrix_combo.grid(row=0, column=1, padx=5)
+        self.dimred_matrix_combo.bind('<<ComboboxSelected>>', self.on_dimred_matrix_selection_change)
+        
+        # Dimension Reduction Type dropdown
+        ttk.Label(operation_frame, text="Dim. Red. Type:").grid(row=1, column=0, sticky="w", padx=5)
+        self.param_vars['dim_red_type'] = tk.StringVar(value='Linear')
+        self.dimred_type_combo = ttk.Combobox(operation_frame, textvariable=self.param_vars['dim_red_type'],
+                                             values=['Linear', 'Non-Linear', 'Other'], 
+                                             state="readonly", width=20)
+        self.dimred_type_combo.grid(row=1, column=1, padx=5)
+        self.dimred_type_combo.bind('<<ComboboxSelected>>', self.on_dimred_type_change)
+        
+        # Method dropdown (will be populated based on dim red type)
+        ttk.Label(operation_frame, text="Method:").grid(row=2, column=0, sticky="w", padx=5)
+        self.param_vars['method'] = tk.StringVar(value='PCA')
+        self.dimred_method_combo = ttk.Combobox(operation_frame, textvariable=self.param_vars['method'],
+                                               values=['PCA', 'LCA', 'SVD'], 
+                                               state="readonly", width=20)
+        self.dimred_method_combo.grid(row=2, column=1, padx=5)
+        
+        # Parameters frame content (empty for now as requested)
+        placeholder_label = ttk.Label(parameters_frame, text="Parameters will be added in future steps", 
+                                     font=("Arial", 9), foreground="gray")
+        placeholder_label.pack(pady=20)
+        
+        # Update matrix dropdown based on currently selected dataset
+        self.update_dimred_matrix_dropdown()
+    
+    def update_dimred_matrix_dropdown(self):
+        """Update matrix dropdown based on selected dataset for Dimensionality Reduction."""
+        if not self.selected_dataset:
+            self.dimred_matrix_combo['values'] = []
+            return
+        
+        # Get available matrices for the selected dataset
+        from src.data_processing.processors import DataProcessingManager
+        manager = DataProcessingManager()
+        dimred_processor = manager.get_processor("Dimensionality Reduction")
+        
+        if dimred_processor:
+            available_matrices = dimred_processor.find_matrix_files(self.selected_dataset.name)
+            self.dimred_matrix_combo['values'] = available_matrices
+            
+            # Clear current selection if no matrices available
+            if not available_matrices:
+                self.param_vars['matrix'].set('')
+            elif len(available_matrices) == 1:
+                # Auto-select if only one matrix available
+                self.param_vars['matrix'].set(available_matrices[0])
+                self.on_dimred_matrix_selection_change()
+            else:
+                # Prefer normalized matrices if available
+                preferred_matrices = [m for m in available_matrices if 'norm01' in m or 'zscore' in m]
+                if preferred_matrices:
+                    self.param_vars['matrix'].set(preferred_matrices[0])
+                    self.on_dimred_matrix_selection_change()
+    
+    def on_dimred_matrix_selection_change(self, event=None):
+        """Handle matrix selection change for Dimensionality Reduction."""
+        # For now, no special handling needed when matrix selection changes
+        pass
+    
+    def on_dimred_type_change(self, event=None):
+        """Handle dimension reduction type change - update method dropdown."""
+        dim_red_type = self.param_vars['dim_red_type'].get()
+        
+        # Define method options based on dimension reduction type
+        method_options = {
+            'Linear': ['PCA', 'LCA', 'SVD'],
+            'Non-Linear': ['t-SNE', 'UMAP'],
+            'Other': ['CNMF']
+        }
+        
+        # Update method dropdown values
+        methods = method_options.get(dim_red_type, ['PCA'])
+        self.dimred_method_combo['values'] = methods
+        
+        # Set default method for the selected type
+        if methods:
+            self.param_vars['method'].set(methods[0])
+    
     def create_indexing_params(self):
         """Create parameter widgets for Indexing."""
         # Clear existing params
@@ -807,6 +913,9 @@ class DataProcessingGUI:
         elif processing_type == "Hierarchical Clustering":
             self.create_hierarchical_clustering_params()
             self.preview_button.config(text="Preview Clustering")
+        elif processing_type == "Dimensionality Reduction":
+            self.create_dimensionality_reduction_params()
+            self.preview_button.config(text="Preview Reduction")
         else:
             # Fallback to Matrix Extraction for unknown types
             self.create_matrix_extraction_params()
@@ -858,6 +967,9 @@ class DataProcessingGUI:
                 # Update matrix dropdown if Hierarchical Clustering is selected
                 elif self.processing_type_var.get() == "Hierarchical Clustering":
                     self.update_hierarchical_matrix_dropdown()
+                # Update matrix dropdown if Dimensionality Reduction is selected
+                elif self.processing_type_var.get() == "Dimensionality Reduction":
+                    self.update_dimred_matrix_dropdown()
     
     def start_processing(self):
         """Start a processing job."""
@@ -947,6 +1059,23 @@ class DataProcessingGUI:
                 messagebox.showwarning("No Matrix Selected", "Please select a matrix for hierarchical clustering.")
                 return
         
+        # Additional validation for Dimensionality Reduction
+        if processing_type == "Dimensionality Reduction":
+            matrix_selected = self.param_vars.get('matrix', tk.StringVar()).get()
+            if not matrix_selected:
+                messagebox.showwarning("No Matrix Selected", "Please select a matrix for dimensionality reduction.")
+                return
+            
+            dim_red_type = self.param_vars.get('dim_red_type', tk.StringVar()).get()
+            if not dim_red_type:
+                messagebox.showwarning("Missing Dimension Reduction Type", "Please select a dimension reduction type.")
+                return
+            
+            method = self.param_vars.get('method', tk.StringVar()).get()
+            if not method:
+                messagebox.showwarning("Missing Method", "Please select a dimensionality reduction method.")
+                return
+        
         try:
             # Collect parameters
             parameters = {}
@@ -996,6 +1125,12 @@ class DataProcessingGUI:
                 clustering_method = parameters.get('clustering_method', 'ward')
                 distance_metric = parameters.get('distance_metric', 'euclidean')[:4]  # First 4 letters
                 job_name = f"HAC_{output_prefix}_{clustering_method}_{distance_metric}"
+            elif processing_type == "Dimensionality Reduction":
+                # Generate job name for Dimensionality Reduction
+                matrix_name = parameters.get('matrix', 'matrix')
+                method = parameters.get('method', 'PCA')
+                dim_red_type = parameters.get('dim_red_type', 'Linear')
+                job_name = f"DimRed_{method}_{matrix_name}_{dim_red_type}"
             else:
                 # Generate job name from matrix name for other processing types
                 matrix_name = parameters.get('matrix_name', 'extracted_matrix')
