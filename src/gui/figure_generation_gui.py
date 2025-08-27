@@ -93,6 +93,23 @@ class FigureGenerationGUI:
                 "annotation_enabled_default": False,
                 "annotation_height_ratio": 0.035
             }
+        },
+        "PCAManifold": {
+            "description": "Visualize PCA manifold with raster plot and three additional analysis quadrants",
+            "file_types": [".npy", ".csv"],
+            "required_files": [
+                {"name": "raster_matrix", "label": "Raster", "description": "Raster matrix file (.npy)", "pattern": "Raster_matrix*", "extension": ".npy"},
+                {"name": "annotation", "label": "Annotation", "description": "Binary vector file for annotations (.csv)", "pattern": "*", "extension": ".csv", "optional": True}
+            ],
+            "controls": {
+                "colormap": ["binary", "jet", "viridis", "gist_earth"],
+                "row_title_default": "Neurons",
+                "column_title_default": "Time",
+                "annotation_height_ratio": 0.035,
+                "annotation_enabled_default": False,
+                "sort_rows_enabled_default": False,
+                "sort_ascending_default": True
+            }
         }
     }
     
@@ -706,6 +723,8 @@ class FigureGenerationGUI:
             self.create_tuning_curve_file_widgets(mode_config)
         elif mode == "EnsembleTraces":
             self.create_ensemble_traces_file_widgets(mode_config)
+        elif mode == "PCAManifold":
+            self.create_pca_manifold_file_widgets(mode_config)
         else:
             # Generic file widgets for other modes
             self.create_generic_file_widgets(mode_config)
@@ -1289,6 +1308,143 @@ class FigureGenerationGUI:
             print(f"Error updating cluster buttons: {e}")
             self.ensemble_available_clusters = []
     
+    def create_pca_manifold_file_widgets(self, mode_config):
+        """Create PCAManifold-specific file selection widgets."""
+        # Initialize PCA manifold-specific variables
+        self.pca_row_title = tk.StringVar(value=mode_config['controls']['row_title_default'])
+        self.pca_column_title = tk.StringVar(value=mode_config['controls']['column_title_default'])
+        
+        # Initialize annotation variables
+        self.pca_annotation_enabled = tk.BooleanVar(value=mode_config['controls']['annotation_enabled_default'])
+        self.pca_annotation_name = tk.StringVar(value="")
+        
+        # Initialize colormap variable
+        self.pca_colormap = tk.StringVar(value=mode_config['controls']['colormap'][0])
+        
+        # Initialize sorting variables
+        self.pca_sort_rows_enabled = tk.BooleanVar(value=mode_config['controls']['sort_rows_enabled_default'])
+        self.pca_row_sorting_vector = tk.StringVar(value="")
+        self.pca_sort_ascending = tk.BooleanVar(value=mode_config['controls']['sort_ascending_default'])
+        
+        # Raster Matrix selection
+        raster_frame = ttk.Frame(self.file_requirements_container)
+        raster_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(raster_frame, text="Raster:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        raster_var = tk.StringVar()
+        raster_combo = ttk.Combobox(raster_frame, textvariable=raster_var, state="readonly", width=40)
+        raster_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Filter for Raster_matrix* .npy files
+        if hasattr(self, 'available_files'):
+            raster_files = self.filter_files_by_type([".npy"], "Raster_matrix*")
+            raster_combo['values'] = raster_files
+        
+        raster_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Store reference
+        self.file_selection_widgets['raster_matrix'] = {
+            'var': raster_var,
+            'combo': raster_combo,
+            'frame': raster_frame,
+            'config': mode_config['required_files'][0]
+        }
+        
+        # Row Title input
+        row_title_frame = ttk.Frame(self.file_requirements_container)
+        row_title_frame.pack(fill="x", pady=2)
+        ttk.Label(row_title_frame, text="Row Title:").grid(row=0, column=0, sticky="w", padx=5)
+        row_title_entry = ttk.Entry(row_title_frame, textvariable=self.pca_row_title, width=20)
+        row_title_entry.grid(row=0, column=1, padx=5, pady=2)
+        row_title_entry.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        # Column Title input
+        column_title_frame = ttk.Frame(self.file_requirements_container)
+        column_title_frame.pack(fill="x", pady=2)
+        ttk.Label(column_title_frame, text="Column Title:").grid(row=0, column=0, sticky="w", padx=5)
+        column_title_entry = ttk.Entry(column_title_frame, textvariable=self.pca_column_title, width=20)
+        column_title_entry.grid(row=0, column=1, padx=5, pady=2)
+        column_title_entry.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        # Colormap selection
+        colormap_frame = ttk.Frame(self.file_requirements_container)
+        colormap_frame.pack(fill="x", pady=2)
+        ttk.Label(colormap_frame, text="Colormap:").grid(row=0, column=0, sticky="w", padx=5)
+        colormap_combo = ttk.Combobox(colormap_frame, textvariable=self.pca_colormap, 
+                                     values=mode_config['controls']['colormap'], state="readonly", width=15)
+        colormap_combo.grid(row=0, column=1, padx=5, pady=2)
+        colormap_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
+        
+        # Row Sorting controls
+        sorting_frame = ttk.Frame(self.file_requirements_container)
+        sorting_frame.pack(fill="x", pady=2)
+        
+        # Sort Rows checkbox
+        ttk.Checkbutton(sorting_frame, text="Sort Rows", variable=self.pca_sort_rows_enabled,
+                       command=self.update_inspection_figure).grid(row=0, column=0, sticky="w", padx=5)
+        
+        # Row Sorting Vector dropdown
+        ttk.Label(sorting_frame, text="Row Sorting Vector:").grid(row=0, column=1, sticky="w", padx=5)
+        self.pca_row_sorting_vector_combo = ttk.Combobox(sorting_frame, textvariable=self.pca_row_sorting_vector, 
+                                                        state="readonly", width=20)
+        self.pca_row_sorting_vector_combo.grid(row=0, column=2, padx=5, pady=2)
+        self.pca_row_sorting_vector_combo.bind('<<ComboboxSelected>>', lambda e: self.update_inspection_figure())
+        
+        # Ascending checkbox
+        ttk.Checkbutton(sorting_frame, text="Ascending", variable=self.pca_sort_ascending,
+                       command=self.update_inspection_figure).grid(row=0, column=3, sticky="w", padx=5)
+        
+        # Annotation section
+        annotation_frame = ttk.Frame(self.file_requirements_container)
+        annotation_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(annotation_frame, text="Annotation:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        annotation_var = tk.StringVar()
+        annotation_combo = ttk.Combobox(annotation_frame, textvariable=annotation_var, state="readonly", width=30)
+        annotation_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Populate with binary vector files
+        if hasattr(self, 'available_files'):
+            binary_vector_files = self.detect_binary_vector_files()
+            annotation_combo['values'] = binary_vector_files
+        
+        annotation_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Checkbox for enabling annotations
+        ttk.Checkbutton(annotation_frame, text="Enable", variable=self.pca_annotation_enabled,
+                       command=self.update_inspection_figure).grid(row=0, column=2, padx=5)
+        
+        # Annotation name input (below the dropdown)
+        annotation_name_frame = ttk.Frame(self.file_requirements_container)
+        annotation_name_frame.pack(fill="x", pady=2)
+        ttk.Label(annotation_name_frame, text="Annotation Name:").grid(row=0, column=0, sticky="w", padx=5)
+        annotation_name_entry = ttk.Entry(annotation_name_frame, textvariable=self.pca_annotation_name, width=30)
+        annotation_name_entry.grid(row=0, column=1, padx=5, pady=2)
+        annotation_name_entry.bind('<KeyRelease>', lambda e: self.update_inspection_figure())
+        
+        # Bind annotation file selection to update name field
+        def on_annotation_file_change(event=None):
+            selected_file = annotation_var.get()
+            if selected_file and not self.pca_annotation_name.get():
+                # Set default name to filename without extension
+                default_name = os.path.splitext(os.path.basename(selected_file))[0]
+                self.pca_annotation_name.set(default_name)
+            self.on_required_file_change(event)
+        
+        annotation_combo.bind('<<ComboboxSelected>>', on_annotation_file_change)
+        
+        # Store reference
+        self.file_selection_widgets['annotation'] = {
+            'var': annotation_var,
+            'combo': annotation_combo,
+            'frame': annotation_frame,
+            'config': mode_config['required_files'][1],
+            'name_var': self.pca_annotation_name,
+            'name_entry': annotation_name_entry
+        }
+    
     def filter_files_by_type(self, allowed_extensions, pattern=None):
         """Filter available files by allowed extensions and optional pattern."""
         if not hasattr(self, 'available_files'):
@@ -1403,6 +1559,10 @@ class FigureGenerationGUI:
                     self.file_selection_widgets['raster_matrix']['var'].get() and
                     'clusters' in self.file_selection_widgets and 
                     self.file_selection_widgets['clusters']['var'].get())
+        
+        # For PCAManifold, only raster_matrix is required
+        elif mode == "PCAManifold":
+            return 'raster_matrix' in self.file_selection_widgets and self.file_selection_widgets['raster_matrix']['var'].get()
         
         # For other modes, check all non-optional files
         for file_name, widget_info in self.file_selection_widgets.items():
@@ -1921,6 +2081,13 @@ class FigureGenerationGUI:
             # Update dropdowns
             self.row_sorting_vector_combo['values'] = row_sorting_options
             self.column_sorting_vector_combo['values'] = column_sorting_options
+            
+            # Update PCA manifold sorting dropdown if it exists
+            if hasattr(self, 'pca_row_sorting_vector_combo'):
+                self.pca_row_sorting_vector_combo['values'] = row_sorting_options
+                # Clear current selection if it's no longer valid
+                if self.pca_row_sorting_vector.get() not in row_sorting_options:
+                    self.pca_row_sorting_vector.set('')
             
             # Clear current selections if they're no longer valid
             if self.row_sorting_vector_var.get() not in row_sorting_options:
@@ -2516,6 +2683,8 @@ class FigureGenerationGUI:
             self.generate_tuning_curve_figure()
         elif mode == "EnsembleTraces":
             self.generate_ensemble_traces_figure()
+        elif mode == "PCAManifold":
+            self.generate_pca_manifold_figure()
         else:
             # Placeholder for other custom modes
             self.inspection_ax.text(0.5, 0.5, f"Figure generation for '{mode}' mode\nwill be implemented based on:\n\n{mode_config.get('description', 'No description available')}", 
@@ -2665,6 +2834,173 @@ class FigureGenerationGUI:
                                   ha='center', va='center', transform=self.inspection_ax.transAxes,
                                   fontsize=10, color='red')
             print(f"RasterPlot error: {e}")
+    
+    def generate_pca_manifold_figure(self):
+        """Generate PCAManifold visualization with 2x2 subplot layout."""
+        try:
+            # Check if raster matrix is selected
+            if 'raster_matrix' not in self.file_selection_widgets or not self.file_selection_widgets['raster_matrix']['var'].get():
+                self.inspection_ax.text(0.5, 0.5, 'Please select a Raster matrix file', 
+                                      ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                      fontsize=12, alpha=0.7)
+                return
+            
+            # Load raster matrix
+            raster_file = self.file_selection_widgets['raster_matrix']['var'].get()
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            raster_path = os.path.join(dataset_path, raster_file)
+            
+            # Load matrix data
+            raster_matrix = np.load(raster_path)
+            
+            # Apply sorting if enabled
+            if self.pca_sort_rows_enabled.get() and self.pca_row_sorting_vector.get():
+                raster_matrix = self.apply_pca_sorting_to_matrix(raster_matrix)
+            
+            # Check if annotation is enabled and available
+            show_annotation = (self.pca_annotation_enabled.get() and 
+                             'annotation' in self.file_selection_widgets and 
+                             self.file_selection_widgets['annotation']['var'].get())
+            
+            annotation_data = None
+            annotation_file = None
+            if show_annotation:
+                try:
+                    annotation_file = self.file_selection_widgets['annotation']['var'].get()
+                    annotation_path = os.path.join(dataset_path, annotation_file)
+                    annotation_df = pd.read_csv(annotation_path)
+                    annotation_data = annotation_df.iloc[:, 0].values  # Get first column as numpy array
+                    
+                    # Ensure annotation data matches matrix width
+                    if len(annotation_data) != raster_matrix.shape[1]:
+                        print(f"Warning: Annotation length ({len(annotation_data)}) doesn't match matrix width ({raster_matrix.shape[1]})")
+                        # Resize annotation data to match matrix width
+                        if len(annotation_data) > raster_matrix.shape[1]:
+                            annotation_data = annotation_data[:raster_matrix.shape[1]]
+                        else:
+                            # Pad with zeros if annotation is shorter
+                            padded_data = np.zeros(raster_matrix.shape[1])
+                            padded_data[:len(annotation_data)] = annotation_data
+                            annotation_data = padded_data
+                            
+                except Exception as e:
+                    print(f"Error loading annotation data: {e}")
+                    show_annotation = False
+                    annotation_data = None
+            
+            # Clear the figure and create 2x2 subplot layout
+            self.inspection_fig.clear()
+            self.reset_threshold_variables()
+            
+            # Create 2x2 grid layout
+            gs = self.inspection_fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+            
+            # First quadrant (upper left) - Raster plot
+            if show_annotation and annotation_data is not None:
+                # Create nested gridspec for raster plot with annotation
+                raster_gs = gs[0, 0].subgridspec(2, 1, height_ratios=[self.MODE_DEFINITIONS["PCAManifold"]["controls"]["annotation_height_ratio"], 1.0], hspace=0.02)
+                
+                # Annotation subplot
+                annotation_ax = self.inspection_fig.add_subplot(raster_gs[0])
+                annotation_name = self.pca_annotation_name.get() or os.path.splitext(os.path.basename(annotation_file))[0]
+                self.render_annotation(annotation_ax, annotation_data, annotation_name)
+                
+                # Raster plot subplot
+                raster_ax = self.inspection_fig.add_subplot(raster_gs[1])
+            else:
+                # Single raster plot subplot
+                raster_ax = self.inspection_fig.add_subplot(gs[0, 0])
+            
+            # Create the raster plot
+            colormap = self.pca_colormap.get()
+            im = raster_ax.imshow(raster_matrix, cmap=colormap, aspect='auto')
+            
+            # Set axis labels for raster plot
+            raster_ax.set_xlabel(self.pca_column_title.get())
+            raster_ax.set_ylabel(self.pca_row_title.get())
+            raster_ax.set_title("Raster Plot")
+            
+            # Clear row and column labels for smaller resolution as requested
+            raster_ax.set_xticks([])
+            raster_ax.set_yticks([])
+            
+            # Store reference to main raster axis for potential later use
+            self.inspection_ax = raster_ax
+            
+            # Second quadrant (upper right) - Empty placeholder
+            placeholder_ax1 = self.inspection_fig.add_subplot(gs[0, 1])
+            placeholder_ax1.text(0.5, 0.5, 'Placeholder\nQuadrant 2', 
+                                ha='center', va='center', transform=placeholder_ax1.transAxes,
+                                fontsize=12, alpha=0.5)
+            placeholder_ax1.set_xticks([])
+            placeholder_ax1.set_yticks([])
+            
+            # Third quadrant (lower left) - Empty placeholder
+            placeholder_ax2 = self.inspection_fig.add_subplot(gs[1, 0])
+            placeholder_ax2.text(0.5, 0.5, 'Placeholder\nQuadrant 3', 
+                                ha='center', va='center', transform=placeholder_ax2.transAxes,
+                                fontsize=12, alpha=0.5)
+            placeholder_ax2.set_xticks([])
+            placeholder_ax2.set_yticks([])
+            
+            # Fourth quadrant (lower right) - Empty placeholder
+            placeholder_ax3 = self.inspection_fig.add_subplot(gs[1, 1])
+            placeholder_ax3.text(0.5, 0.5, 'Placeholder\nQuadrant 4', 
+                                ha='center', va='center', transform=placeholder_ax3.transAxes,
+                                fontsize=12, alpha=0.5)
+            placeholder_ax3.set_xticks([])
+            placeholder_ax3.set_yticks([])
+            
+        except Exception as e:
+            # Create a temporary axis for error display if it doesn't exist
+            if not hasattr(self, 'inspection_ax') or self.inspection_ax is None:
+                self.inspection_fig.clear()
+                self.reset_threshold_variables()
+                self.inspection_ax = self.inspection_fig.add_subplot(111)
+            self.inspection_ax.text(0.5, 0.5, f'Error generating PCA Manifold:\n{str(e)}', 
+                                  ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                  fontsize=10, color='red')
+            print(f"PCA Manifold error: {e}")
+    
+    def apply_pca_sorting_to_matrix(self, raster_matrix):
+        """Apply row sorting to raster matrix for PCA manifold mode."""
+        try:
+            # Get the sorting vector file path
+            sorting_vector = self.pca_row_sorting_vector.get()
+            if not sorting_vector:
+                return raster_matrix
+            
+            # Find row labels file to get sorting data
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            row_label_files = self.filter_files_by_type([".csv"], "*row_labels*")
+            
+            if not row_label_files:
+                print("No row labels file found for sorting")
+                return raster_matrix
+            
+            # Load the first row labels file
+            row_labels_path = os.path.join(dataset_path, row_label_files[0])
+            row_labels_df = pd.read_csv(row_labels_path)
+            
+            if sorting_vector not in row_labels_df.columns:
+                print(f"Sorting vector '{sorting_vector}' not found in row labels file")
+                return raster_matrix
+            
+            # Get sorting indices
+            sort_values = row_labels_df[sorting_vector].values
+            sort_indices = np.argsort(sort_values)
+            
+            if not self.pca_sort_ascending.get():
+                sort_indices = sort_indices[::-1]
+            
+            # Apply sorting to matrix rows
+            sorted_matrix = raster_matrix[sort_indices, :]
+            
+            return sorted_matrix
+            
+        except Exception as e:
+            print(f"Error applying PCA sorting: {e}")
+            return raster_matrix
     
     def generate_matrix_visualization_figure(self):
         """Generate MatrixVisualization visualization."""
