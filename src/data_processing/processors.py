@@ -1653,6 +1653,204 @@ class HierarchicalClusteringProcessor(BaseProcessor):
             }
 
 
+class MatrixAssembleProcessor(BaseProcessor):
+    """Processor for assembling matrices by row-wise concatenation."""
+    
+    def __init__(self):
+        super().__init__("MatrixAssemble")
+        self.description = "Assemble matrices by row-wise concatenation from different datasets"
+    
+    def get_default_parameters(self) -> Dict[str, Any]:
+        return {
+            'base_set': '',
+            'base_matrix': '',
+            'add_set': '',
+            'add_matrix': '',
+            'new_dataset_name': ''
+        }
+    
+    def get_progress_steps(self) -> List[str]:
+        """Return progress step descriptions for Matrix Assembly."""
+        return [
+            "Loading base matrix",
+            "Loading add matrix", 
+            "Validating matrix compatibility",
+            "Concatenating matrices",
+            "Creating new dataset folder",
+            "Saving assembled matrix",
+            "Completed"
+        ]
+    
+    def find_dataset_folders(self) -> List[str]:
+        """Find available dataset folders in the datasets directory."""
+        datasets_dir = os.path.join("data", "datasets")
+        
+        if not os.path.exists(datasets_dir):
+            return []
+        
+        dataset_folders = []
+        for item in os.listdir(datasets_dir):
+            item_path = os.path.join(datasets_dir, item)
+            if os.path.isdir(item_path):
+                dataset_folders.append(item)
+        
+        return sorted(dataset_folders)
+    
+    def find_raster_matrices(self, dataset_name: str) -> List[str]:
+        """Find available Raster matrices for the given dataset."""
+        matrix_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+        
+        if not os.path.exists(matrix_dir):
+            return []
+        
+        matrix_files = []
+        for file in os.listdir(matrix_dir):
+            if file.startswith('Raster') and file.endswith('.npy'):
+                # Extract the matrix name without extension
+                matrix_name = os.path.splitext(file)[0]
+                matrix_files.append(matrix_name)
+        
+        return sorted(matrix_files)
+    
+    def validate_parameters(self, parameters: Dict[str, Any]) -> bool:
+        """Validate matrix assembly parameters."""
+        base_set = parameters.get('base_set')
+        base_matrix = parameters.get('base_matrix')
+        add_set = parameters.get('add_set')
+        add_matrix = parameters.get('add_matrix')
+        new_dataset_name = parameters.get('new_dataset_name')
+        
+        # Check if all required parameters are provided
+        if not all([base_set, base_matrix, add_set, add_matrix, new_dataset_name]):
+            return False
+        
+        # Check if datasets exist
+        available_datasets = self.find_dataset_folders()
+        if base_set not in available_datasets or add_set not in available_datasets:
+            return False
+        
+        # Check if matrices exist
+        base_matrices = self.find_raster_matrices(base_set)
+        add_matrices = self.find_raster_matrices(add_set)
+        
+        if base_matrix not in base_matrices or add_matrix not in add_matrices:
+            return False
+        
+        # Check if new dataset name is valid (no special characters, not empty)
+        if not new_dataset_name.strip() or '/' in new_dataset_name or '\\' in new_dataset_name:
+            return False
+        
+        return True
+    
+    def process_with_progress(self, parameters: Dict[str, Any] = None, 
+                            progress_callback: Callable[[float], None] = None) -> Dict[str, Any]:
+        """Process matrix assembly with progress updates."""
+        try:
+            if progress_callback:
+                progress_callback(0.0)
+            
+            # Validate parameters
+            if not self.validate_parameters(parameters):
+                return {
+                    'success': False,
+                    'message': 'Invalid parameters for matrix assembly'
+                }
+            
+            base_set = parameters.get('base_set')
+            base_matrix = parameters.get('base_matrix')
+            add_set = parameters.get('add_set')
+            add_matrix = parameters.get('add_matrix')
+            new_dataset_name = parameters.get('new_dataset_name')
+            
+            # Step 1: Load base matrix (0-20%)
+            if progress_callback:
+                progress_callback(5.0)
+            
+            base_matrix_path = os.path.join("data", "datasets", base_set, "processed", "matrices", f"{base_matrix}.npy")
+            base_data = np.load(base_matrix_path)
+            
+            if progress_callback:
+                progress_callback(20.0)
+            
+            # Step 2: Load add matrix (20-40%)
+            add_matrix_path = os.path.join("data", "datasets", add_set, "processed", "matrices", f"{add_matrix}.npy")
+            add_data = np.load(add_matrix_path)
+            
+            if progress_callback:
+                progress_callback(40.0)
+            
+            # Step 3: Validate matrix compatibility (40-50%)
+            if base_data.shape[0] != add_data.shape[0]:
+                return {
+                    'success': False,
+                    'message': f'Matrix compatibility error: Base matrix has {base_data.shape[0]} rows, Add matrix has {add_data.shape[0]} rows. Row counts must match for concatenation.'
+                }
+            
+            if progress_callback:
+                progress_callback(50.0)
+            
+            # Step 4: Concatenate matrices (50-70%)
+            assembled_matrix = np.concatenate([base_data, add_data], axis=1)
+            
+            if progress_callback:
+                progress_callback(70.0)
+            
+            # Step 5: Create new dataset folder structure (70-80%)
+            new_dataset_dir = os.path.join("data", "datasets", new_dataset_name)
+            new_matrices_dir = os.path.join(new_dataset_dir, "processed", "matrices")
+            
+            os.makedirs(new_matrices_dir, exist_ok=True)
+            
+            if progress_callback:
+                progress_callback(80.0)
+            
+            # Step 6: Save assembled matrix (80-95%)
+            assembled_matrix_name = f"Raster_matrix_assembled_{base_matrix.split('_')[-1]}_{add_matrix.split('_')[-1]}"
+            assembled_matrix_path = os.path.join(new_matrices_dir, f"{assembled_matrix_name}.npy")
+            
+            np.save(assembled_matrix_path, assembled_matrix)
+            
+            if progress_callback:
+                progress_callback(95.0)
+            
+            # Step 7: Create metadata file (95-100%)
+            metadata = {
+                'assembly_info': {
+                    'base_dataset': base_set,
+                    'base_matrix': base_matrix,
+                    'add_dataset': add_set,
+                    'add_matrix': add_matrix,
+                    'assembly_method': 'row_wise_concatenation',
+                    'assembled_shape': assembled_matrix.shape,
+                    'base_shape': base_data.shape,
+                    'add_shape': add_data.shape,
+                    'timestamp': datetime.now().isoformat()
+                }
+            }
+            
+            metadata_path = os.path.join(new_matrices_dir, f"{assembled_matrix_name}_metadata.json")
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            if progress_callback:
+                progress_callback(100.0)
+            
+            return {
+                'success': True,
+                'message': f'Matrix assembly completed successfully. Assembled matrix shape: {assembled_matrix.shape}',
+                'output_path': assembled_matrix_path,
+                'assembled_shape': assembled_matrix.shape,
+                'base_shape': base_data.shape,
+                'add_shape': add_data.shape
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Matrix assembly failed: {str(e)}'
+            }
+
+
 class DimensionalityReductionProcessor(BaseProcessor):
     """Processor for dimensionality reduction analysis of matrices."""
     
@@ -1938,6 +2136,7 @@ class DataProcessingManager:
     def __init__(self):
         self.processors = {
             'Matrix Extraction': MatrixExtractionProcessor(),
+            'MatrixAssemble': MatrixAssembleProcessor(),
             'Matrix Modification': MatrixModificationProcessor(),
             'Data Annotation': DataAnnotationProcessor(),
             'Indexing': IndexingProcessor(),

@@ -1,0 +1,22 @@
+{
+  "assembly_info": {
+    "base_dataset": "Ensembles_VF_traces",
+    "base_matrix": "Raster_matrix_norm01",
+    "add_dataset": "Ensembles_VF_postCNO_traces",
+    "add_matrix": "Raster_matrix_norm01",
+    "assembly_method": "row_wise_concatenation",
+    "assembled_shape": [
+      958,
+      2476
+    ],
+    "base_shape": [
+      958,
+      1215
+    ],
+    "add_shape": [
+      958,
+      1261
+    ],
+    "timestamp": "2025-08-28T22:47:05.666293"
+  }
+}

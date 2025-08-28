@@ -9,6 +9,7 @@ import os
 import threading
 import time
 import pandas as pd
+import numpy as np
 
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -743,6 +744,99 @@ class DataProcessingGUI:
             suggested_name = f"Ruzicka Matrix_{matrix_suffix}"
             self.param_vars['matrix_name'].set(suggested_name)
     
+    def create_matrix_assemble_params(self):
+        """Create parameter widgets for Matrix Assembly."""
+        # Clear existing params
+        for widget in self.params_frame.winfo_children():
+            widget.destroy()
+        self.param_vars.clear()
+        
+        # Get available dataset folders
+        from src.data_processing.processors import DataProcessingManager
+        manager = DataProcessingManager()
+        matrix_assemble_processor = manager.get_processor("MatrixAssemble")
+        
+        if not matrix_assemble_processor:
+            ttk.Label(self.params_frame, text="MatrixAssemble processor not found", 
+                     font=("Arial", 10), foreground="red").pack(pady=20)
+            return
+        
+        available_datasets = matrix_assemble_processor.find_dataset_folders()
+        
+        # BaseSet dropdown
+        ttk.Label(self.params_frame, text="BaseSet:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['base_set'] = tk.StringVar()
+        self.base_set_combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars['base_set'],
+                                          values=available_datasets, state="readonly", width=20)
+        self.base_set_combo.grid(row=0, column=1, padx=5, pady=2)
+        self.base_set_combo.bind('<<ComboboxSelected>>', self.on_base_set_change)
+        
+        # BaseMatrix dropdown
+        ttk.Label(self.params_frame, text="BaseMatrix:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['base_matrix'] = tk.StringVar()
+        self.base_matrix_combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars['base_matrix'],
+                                             values=[], state="readonly", width=20)
+        self.base_matrix_combo.grid(row=1, column=1, padx=5, pady=2)
+        
+        # AddSet dropdown
+        ttk.Label(self.params_frame, text="AddSet:").grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['add_set'] = tk.StringVar()
+        self.add_set_combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars['add_set'],
+                                         values=available_datasets, state="readonly", width=20)
+        self.add_set_combo.grid(row=2, column=1, padx=5, pady=2)
+        self.add_set_combo.bind('<<ComboboxSelected>>', self.on_add_set_change)
+        
+        # AddMatrix dropdown
+        ttk.Label(self.params_frame, text="AddMatrix:").grid(row=3, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['add_matrix'] = tk.StringVar()
+        self.add_matrix_combo = ttk.Combobox(self.params_frame, textvariable=self.param_vars['add_matrix'],
+                                            values=[], state="readonly", width=20)
+        self.add_matrix_combo.grid(row=3, column=1, padx=5, pady=2)
+        
+        # New DataSet Name
+        ttk.Label(self.params_frame, text="New DataSet Name:").grid(row=4, column=0, sticky="w", padx=5, pady=2)
+        self.param_vars['new_dataset_name'] = tk.StringVar()
+        ttk.Entry(self.params_frame, textvariable=self.param_vars['new_dataset_name'], 
+                 width=20).grid(row=4, column=1, padx=5, pady=2)
+    
+    def on_base_set_change(self, event=None):
+        """Handle base set selection change - update base matrix dropdown."""
+        base_set = self.param_vars['base_set'].get()
+        if base_set:
+            from src.data_processing.processors import DataProcessingManager
+            manager = DataProcessingManager()
+            matrix_assemble_processor = manager.get_processor("MatrixAssemble")
+            
+            if matrix_assemble_processor:
+                available_matrices = matrix_assemble_processor.find_raster_matrices(base_set)
+                self.base_matrix_combo['values'] = available_matrices
+                
+                # Clear current selection
+                self.param_vars['base_matrix'].set('')
+                
+                # Auto-select if only one matrix available
+                if len(available_matrices) == 1:
+                    self.param_vars['base_matrix'].set(available_matrices[0])
+    
+    def on_add_set_change(self, event=None):
+        """Handle add set selection change - update add matrix dropdown."""
+        add_set = self.param_vars['add_set'].get()
+        if add_set:
+            from src.data_processing.processors import DataProcessingManager
+            manager = DataProcessingManager()
+            matrix_assemble_processor = manager.get_processor("MatrixAssemble")
+            
+            if matrix_assemble_processor:
+                available_matrices = matrix_assemble_processor.find_raster_matrices(add_set)
+                self.add_matrix_combo['values'] = available_matrices
+                
+                # Clear current selection
+                self.param_vars['add_matrix'].set('')
+                
+                # Auto-select if only one matrix available
+                if len(available_matrices) == 1:
+                    self.param_vars['add_matrix'].set(available_matrices[0])
+
     def create_hierarchical_clustering_params(self):
         """Create parameter widgets for Hierarchical Clustering."""
         # Clear existing params
@@ -971,6 +1065,9 @@ class DataProcessingGUI:
         if processing_type == "Matrix Extraction":
             self.create_matrix_extraction_params()
             self.preview_button.config(text="Preview Matrix")
+        elif processing_type == "MatrixAssemble":
+            self.create_matrix_assemble_params()
+            self.preview_button.config(text="Preview Assembly")
         elif processing_type == "Matrix Modification":
             self.create_matrix_modification_params()
             self.preview_button.config(text="Preview Matrix")
@@ -1132,6 +1229,33 @@ class DataProcessingGUI:
                 messagebox.showwarning("No Matrix Selected", "Please select a matrix for hierarchical clustering.")
                 return
         
+        # Additional validation for MatrixAssemble
+        if processing_type == "MatrixAssemble":
+            base_set = self.param_vars.get('base_set', tk.StringVar()).get().strip()
+            if not base_set:
+                messagebox.showwarning("Missing BaseSet", "Please select a base dataset.")
+                return
+            
+            base_matrix = self.param_vars.get('base_matrix', tk.StringVar()).get().strip()
+            if not base_matrix:
+                messagebox.showwarning("Missing BaseMatrix", "Please select a base matrix.")
+                return
+            
+            add_set = self.param_vars.get('add_set', tk.StringVar()).get().strip()
+            if not add_set:
+                messagebox.showwarning("Missing AddSet", "Please select an add dataset.")
+                return
+            
+            add_matrix = self.param_vars.get('add_matrix', tk.StringVar()).get().strip()
+            if not add_matrix:
+                messagebox.showwarning("Missing AddMatrix", "Please select an add matrix.")
+                return
+            
+            new_dataset_name = self.param_vars.get('new_dataset_name', tk.StringVar()).get().strip()
+            if not new_dataset_name:
+                messagebox.showwarning("Missing New Dataset Name", "Please provide a name for the new dataset.")
+                return
+        
         # Additional validation for Dimensionality Reduction
         if processing_type == "Dimensionality Reduction":
             matrix_selected = self.param_vars.get('matrix', tk.StringVar()).get()
@@ -1210,6 +1334,12 @@ class DataProcessingGUI:
                 clustering_method = parameters.get('clustering_method', 'ward')
                 distance_metric = parameters.get('distance_metric', 'euclidean')[:4]  # First 4 letters
                 job_name = f"HAC_{output_prefix}_{clustering_method}_{distance_metric}"
+            elif processing_type == "MatrixAssemble":
+                # Generate job name for Matrix Assembly
+                base_set = parameters.get('base_set', 'base')
+                add_set = parameters.get('add_set', 'add')
+                new_dataset_name = parameters.get('new_dataset_name', 'assembled')
+                job_name = f"MatrixAssemble_{base_set}_{add_set}_{new_dataset_name}"
             elif processing_type == "Dimensionality Reduction":
                 # Generate job name for Dimensionality Reduction
                 matrix_name = parameters.get('matrix', 'matrix')
@@ -1254,6 +1384,11 @@ class DataProcessingGUI:
             self.preview_indexing()
             return
         
+        # Handle MatrixAssemble preview
+        if processing_type == "MatrixAssemble":
+            self.preview_matrix_assemble()
+            return
+        
         # Handle Ruzicka Similarity preview
         if processing_type == "Ruzicka Similarity":
             self.preview_ruzicka_similarity()
@@ -1293,6 +1428,97 @@ class DataProcessingGUI:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to generate preview: {str(e)}")
     
+    def preview_matrix_assemble(self):
+        """Preview the matrix assembly operation."""
+        # Validate required parameters
+        base_set = self.param_vars.get('base_set', tk.StringVar()).get().strip()
+        if not base_set:
+            messagebox.showwarning("Missing BaseSet", "Please select a base dataset.")
+            return
+        
+        base_matrix = self.param_vars.get('base_matrix', tk.StringVar()).get().strip()
+        if not base_matrix:
+            messagebox.showwarning("Missing BaseMatrix", "Please select a base matrix.")
+            return
+        
+        add_set = self.param_vars.get('add_set', tk.StringVar()).get().strip()
+        if not add_set:
+            messagebox.showwarning("Missing AddSet", "Please select an add dataset.")
+            return
+        
+        add_matrix = self.param_vars.get('add_matrix', tk.StringVar()).get().strip()
+        if not add_matrix:
+            messagebox.showwarning("Missing AddMatrix", "Please select an add matrix.")
+            return
+        
+        new_dataset_name = self.param_vars.get('new_dataset_name', tk.StringVar()).get().strip()
+        if not new_dataset_name:
+            messagebox.showwarning("Missing New Dataset Name", "Please provide a name for the new dataset.")
+            return
+        
+        try:
+            # Load the matrices to get their shapes
+            base_matrix_path = os.path.join("data", "datasets", base_set, "processed", "matrices", f"{base_matrix}.npy")
+            add_matrix_path = os.path.join("data", "datasets", add_set, "processed", "matrices", f"{add_matrix}.npy")
+            
+            if not os.path.exists(base_matrix_path):
+                messagebox.showerror("File Not Found", f"Base matrix file not found: {base_matrix_path}")
+                return
+            
+            if not os.path.exists(add_matrix_path):
+                messagebox.showerror("File Not Found", f"Add matrix file not found: {add_matrix_path}")
+                return
+            
+            # Load matrices to get shapes
+            base_data = np.load(base_matrix_path)
+            add_data = np.load(add_matrix_path)
+            
+            # Check compatibility
+            if base_data.shape[0] != add_data.shape[0]:
+                messagebox.showerror("Compatibility Error", 
+                                   f"Matrix compatibility error: Base matrix has {base_data.shape[0]} rows, "
+                                   f"Add matrix has {add_data.shape[0]} rows. Row counts must match for concatenation.")
+                return
+            
+            # Calculate assembled shape
+            assembled_shape = (base_data.shape[0], base_data.shape[1] + add_data.shape[1])
+            
+            # Show assembly preview window
+            self.show_matrix_assemble_preview_window(base_data.shape, add_data.shape, assembled_shape, 
+                                                   base_set, base_matrix, add_set, add_matrix, new_dataset_name)
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate matrix assembly preview: {str(e)}")
+    
+    def show_matrix_assemble_preview_window(self, base_shape, add_shape, assembled_shape, 
+                                          base_set, base_matrix, add_set, add_matrix, new_dataset_name):
+        """Show matrix assembly preview in a separate window."""
+        preview_window = tk.Toplevel(self.window)
+        preview_window.title(f"Matrix Assembly Preview - {new_dataset_name}")
+        preview_window.geometry("600x400")
+        
+        # Info frame
+        info_frame = ttk.Frame(preview_window)
+        info_frame.pack(fill="x", padx=10, pady=5)
+        
+        info_text = f"Matrix Assembly Preview\n\n"
+        info_text += f"Base Matrix: {base_matrix} from {base_set}\n"
+        info_text += f"  Shape: {base_shape[0]} rows × {base_shape[1]} columns\n\n"
+        info_text += f"Add Matrix: {add_matrix} from {add_set}\n"
+        info_text += f"  Shape: {add_shape[0]} rows × {add_shape[1]} columns\n\n"
+        info_text += f"Assembled Matrix: {new_dataset_name}\n"
+        info_text += f"  Shape: {assembled_shape[0]} rows × {assembled_shape[1]} columns\n\n"
+        info_text += f"Assembly Method: Row-wise concatenation (axis=1)\n"
+        info_text += f"Compatibility: ✓ Row counts match ({base_shape[0]} = {add_shape[0]})"
+        
+        ttk.Label(info_frame, text=info_text, font=("Arial", 10), justify="left").pack(anchor="w")
+        
+        # Button frame
+        button_frame = ttk.Frame(preview_window)
+        button_frame.pack(fill="x", padx=10, pady=10)
+        
+        ttk.Button(button_frame, text="Close", command=preview_window.destroy).pack(side="right", padx=5)
+
     def preview_ruzicka_similarity(self):
         """Preview the Ruzicka similarity calculation."""
         # Validate required parameters
