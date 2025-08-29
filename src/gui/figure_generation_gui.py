@@ -1150,14 +1150,16 @@ class FigureGenerationGUI:
         wocno_combo = ttk.Combobox(wocno_frame, textvariable=wocno_var, state="readonly", width=40)
         wocno_combo.grid(row=0, column=1, padx=5, pady=2)
         
-        # Filter for tuning CSV files and set default
+        # Filter for tuning CSV files from matrices folder and set default
         if hasattr(self, 'available_files'):
-            csv_files = self.filter_files_by_type([".csv"])
-            wocno_combo['values'] = csv_files
+            tuning_files = self.get_tuning_files()
+            # Create mapping from filename to full path
+            self.tuning_file_mapping = {os.path.basename(f): f for f in tuning_files}
+            wocno_combo['values'] = [os.path.basename(f) for f in tuning_files]  # Display only filenames
             # Auto-detect woCNO file
-            wocno_default = self.find_tuning_file(csv_files, ['woCNO', 'wocno', 'wo_CNO', 'wo_cno'])
+            wocno_default = self.find_tuning_file(tuning_files, ['woCNO', 'wocno', 'wo_CNO', 'wo_cno'])
             if wocno_default:
-                wocno_var.set(wocno_default)
+                wocno_var.set(os.path.basename(wocno_default))  # Set only filename
         
         wocno_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
         
@@ -1179,13 +1181,13 @@ class FigureGenerationGUI:
         wcno_combo = ttk.Combobox(wcno_frame, textvariable=wcno_var, state="readonly", width=40)
         wcno_combo.grid(row=0, column=1, padx=5, pady=2)
         
-        # Filter for tuning CSV files and set default
+        # Filter for tuning CSV files from matrices folder and set default
         if hasattr(self, 'available_files'):
-            wcno_combo['values'] = csv_files
+            wcno_combo['values'] = [os.path.basename(f) for f in tuning_files]  # Display only filenames
             # Auto-detect wCNO file
-            wcno_default = self.find_tuning_file(csv_files, ['wCNO', 'wcno', 'w_CNO', 'w_cno'])
+            wcno_default = self.find_tuning_file(tuning_files, ['wCNO', 'wcno', 'w_CNO', 'w_cno'])
             if wcno_default:
-                wcno_var.set(wcno_default)
+                wcno_var.set(os.path.basename(wcno_default))  # Set only filename
         
         wcno_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
         
@@ -1196,6 +1198,21 @@ class FigureGenerationGUI:
             'frame': wcno_frame,
             'config': mode_config['required_files'][1]
         }
+    
+    def get_tuning_files(self):
+        """Get CSV files from matrices folder that start with 'Tuning'."""
+        if not hasattr(self, 'available_files'):
+            return []
+        
+        tuning_files = []
+        for file_path in self.available_files:
+            # Check if it's a CSV file in matrices folder starting with 'Tuning'
+            if (file_path.endswith('.csv') and 
+                'processed/matrices' in file_path and 
+                os.path.basename(file_path).startswith('Tuning')):
+                tuning_files.append(file_path)
+        
+        return tuning_files
     
     def find_tuning_file(self, file_list, suffixes):
         """Find tuning file with specified suffixes."""
@@ -1685,6 +1702,19 @@ class FigureGenerationGUI:
             for file_name, widget_info in self.file_selection_widgets.items():
                 file_path = widget_info['var'].get()
                 if file_path:
+                    # Special handling for TuningChange mode - convert filename to full relative path
+                    if (self.inspection_mode_var.get() == "TuningChange" and 
+                        file_name in ['wocno_tuning', 'wcno_tuning']):
+                        # Use mapping to get full relative path
+                        if hasattr(self, 'tuning_file_mapping') and file_path in self.tuning_file_mapping:
+                            file_path = self.tuning_file_mapping[file_path]
+                        else:
+                            # Fallback: recreate mapping
+                            tuning_files = self.get_tuning_files()
+                            self.tuning_file_mapping = {os.path.basename(f): f for f in tuning_files}
+                            if file_path in self.tuning_file_mapping:
+                                file_path = self.tuning_file_mapping[file_path]
+                    
                     self.selected_files[file_name] = file_path
             
             # Load the primary data file for figure generation
@@ -3946,9 +3976,12 @@ class FigureGenerationGUI:
             # Clear the current figure
             self.inspection_fig.clear()
             
-            # Get selected files
-            wocno_file = self.file_selection_widgets['wocno_tuning']['var'].get()
-            wcno_file = self.file_selection_widgets['wcno_tuning']['var'].get()
+            # Get selected files (path resolution is handled in load_selected_files_and_display)
+            wocno_file = self.selected_files.get('wocno_tuning')
+            wcno_file = self.selected_files.get('wcno_tuning')
+            
+            if not wocno_file or not wcno_file:
+                raise ValueError("Both woCNO and wCNO tuning files must be selected")
             
             # Construct full paths
             dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
