@@ -1171,6 +1171,19 @@ class FigureGenerationGUI:
             'config': mode_config['required_files'][0]
         }
         
+        # Add toggle button for plot type
+        toggle_frame = ttk.Frame(main_container)
+        toggle_frame.pack(fill="x", pady=5)
+        
+        self.tuning_change_paired_plot = tk.BooleanVar(value=True)  # Default is paired plot
+        toggle_checkbox = ttk.Checkbutton(
+            toggle_frame,
+            text="Paired/2D plot",
+            variable=self.tuning_change_paired_plot,
+            command=self.on_tuning_change_plot_type_change
+        )
+        toggle_checkbox.pack(side="left", padx=5)
+        
         # wCNO tuning file selection
         wcno_frame = ttk.Frame(main_container)
         wcno_frame.pack(fill="x", pady=2)
@@ -1222,6 +1235,14 @@ class FigureGenerationGUI:
                 if suffix in filename:
                     return file_path
         return None
+    
+    def on_tuning_change_plot_type_change(self):
+        """Handle changes in TuningChange plot type toggle."""
+        # Regenerate figure when plot type changes
+        if (hasattr(self, 'selected_files') and 
+            'wocno_tuning' in self.selected_files and 
+            'wcno_tuning' in self.selected_files):
+            self.generate_tuning_change_figure()
     
     def create_ensemble_traces_file_widgets(self, mode_config):
         """Create EnsembleTraces-specific file selection widgets."""
@@ -3963,6 +3984,200 @@ class FigureGenerationGUI:
                                   fontsize=10, color='red')
             print(f"TuningCurve error: {e}")
     
+    def generate_paired_tuning_plot(self, ax, fig, wocno_values, wcno_values):
+        """Generate the paired/spaghetti plot for tuning change analysis."""
+        # Adjust subplot to leave space at bottom for statistics
+        fig.subplots_adjust(bottom=0.25)
+        
+        # Determine colors based on woCNO values (left plot)
+        # Green: > 0.15, Red: < -0.15, Yellow: between -0.15 and 0.15
+        colors = []
+        for val in wocno_values:
+            if val > 0.15:
+                colors.append('green')
+            elif val < -0.15:
+                colors.append('red')
+            else:  # -0.15 <= val <= 0.15
+                colors.append('yellow')
+        
+        # Create x positions for jittered display
+        n_neurons = len(wocno_values)
+        x_left = np.zeros(n_neurons) + np.random.normal(0, 0.02, n_neurons)  # Small jitter around 0
+        x_right = np.ones(n_neurons) + np.random.normal(0, 0.02, n_neurons)  # Small jitter around 1
+        
+        # Plot left side (woCNO) - colored by position
+        ax.scatter(x_left, wocno_values, c=colors, alpha=0.7, s=30, edgecolors='black', linewidth=0.5, zorder=2)
+        
+        # Plot right side (wCNO) - colored by connection
+        ax.scatter(x_right, wcno_values, c=colors, alpha=0.7, s=30, edgecolors='black', linewidth=0.5, zorder=2)
+        
+        # Add connection lines
+        for i in range(n_neurons):
+            ax.plot([x_left[i], x_right[i]], [wocno_values[i], wcno_values[i]], 
+                   'k-', alpha=0.3, linewidth=0.5, zorder=1)
+        
+        # Calculate and display averages
+        wocno_mean = np.mean(wocno_values)
+        wcno_mean = np.mean(wcno_values)
+        
+        # Add average lines - vertical lines at each condition
+        ax.axhline(y=wocno_mean, xmin=0, xmax=0.4, color='blue', linestyle='--', linewidth=2, alpha=0.8)
+        ax.axhline(y=wcno_mean, xmin=0.6, xmax=1.0, color='blue', linestyle='--', linewidth=2, alpha=0.8)
+        
+        # Add average value text
+        ax.text(0.0, wocno_mean + (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.02, 
+               f'Avg: {wocno_mean:.3f}', ha='center', va='bottom', fontsize=10, fontweight='bold',
+               bbox=dict(boxstyle='round,pad=0.3', facecolor='lightblue', alpha=0.7))
+        ax.text(1.0, wcno_mean + (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.02, 
+               f'Avg: {wcno_mean:.3f}', ha='center', va='bottom', fontsize=10, fontweight='bold',
+               bbox=dict(boxstyle='round,pad=0.3', facecolor='lightblue', alpha=0.7))
+        
+        # Statistical analysis - separate into three categories
+        positive_mask = wocno_values > 0.15
+        negative_mask = wocno_values < -0.15
+        neutral_mask = (wocno_values >= -0.15) & (wocno_values <= 0.15)
+        
+        # Positive encoders (green)
+        if np.sum(positive_mask) > 1:  # Need at least 2 samples for t-test
+            pos_wocno = wocno_values[positive_mask]
+            pos_wcno = wcno_values[positive_mask]
+            pos_tstat, pos_pval = stats.ttest_rel(pos_wocno, pos_wcno)
+            pos_effect_size = (np.mean(pos_wcno) - np.mean(pos_wocno)) / np.std(pos_wocno - pos_wcno)
+        else:
+            pos_pval, pos_effect_size = np.nan, np.nan
+        
+        # Negative encoders (red)
+        if np.sum(negative_mask) > 1:  # Need at least 2 samples for t-test
+            neg_wocno = wocno_values[negative_mask]
+            neg_wcno = wcno_values[negative_mask]
+            neg_tstat, neg_pval = stats.ttest_rel(neg_wocno, neg_wcno)
+            neg_effect_size = (np.mean(neg_wcno) - np.mean(neg_wocno)) / np.std(neg_wocno - neg_wcno)
+        else:
+            neg_pval, neg_effect_size = np.nan, np.nan
+        
+        # Neutral encoders (yellow)
+        if np.sum(neutral_mask) > 1:  # Need at least 2 samples for t-test
+            neu_wocno = wocno_values[neutral_mask]
+            neu_wcno = wcno_values[neutral_mask]
+            neu_tstat, neu_pval = stats.ttest_rel(neu_wocno, neu_wcno)
+            neu_effect_size = (np.mean(neu_wcno) - np.mean(neu_wocno)) / np.std(neu_wocno - neu_wcno)
+        else:
+            neu_pval, neu_effect_size = np.nan, np.nan
+        
+        # Add statistical annotations
+        stats_text = []
+        if not np.isnan(pos_pval):
+            stats_text.append(f"Positive encoders (>0.15, n={np.sum(positive_mask)}): p={pos_pval:.3f}, d={pos_effect_size:.3f}")
+        if not np.isnan(neg_pval):
+            stats_text.append(f"Negative encoders (<-0.15, n={np.sum(negative_mask)}): p={neg_pval:.3f}, d={neg_effect_size:.3f}")
+        if not np.isnan(neu_pval):
+            stats_text.append(f"Neutral encoders (-0.15 to 0.15, n={np.sum(neutral_mask)}): p={neu_pval:.3f}, d={neu_effect_size:.3f}")
+        
+        if stats_text:
+            fig.text(0.5, 0.05, '\n'.join(stats_text), ha='center', va='bottom', 
+                    fontsize=9, style='italic',
+                    bbox=dict(boxstyle='round,pad=0.4', facecolor='lightyellow', alpha=0.8))
+        
+        # Formatting
+        ax.set_xlim(-0.3, 1.3)
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(['woCNO', 'wCNO'])
+        
+        # Set y-limits
+        y_min = min(np.min(wocno_values), np.min(wcno_values))
+        y_max = max(np.max(wocno_values), np.max(wcno_values))
+        y_range = y_max - y_min
+        y_padding = y_range * 0.1
+        ax.set_ylim(y_min - y_padding, y_max + y_padding)
+        
+        # Labels and title
+        ax.set_ylabel('AUC Value')
+        ax.set_xlabel('Condition')
+        ax.set_title('Tuning Change Analysis: Paired Comparison', fontsize=14, fontweight='bold')
+        
+        # Add grid
+        ax.grid(True, alpha=0.3)
+        
+        # Add legend
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor='green', alpha=0.7, label='Positive encoders (>0.15)'),
+            Patch(facecolor='red', alpha=0.7, label='Negative encoders (<-0.15)'),
+            Patch(facecolor='yellow', alpha=0.7, label='Neutral encoders (-0.15 to 0.15)'),
+            plt.Line2D([0], [0], color='blue', linestyle='--', label='Population average')
+        ]
+        fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.92))
+    
+    def generate_2d_scatter_tuning_plot(self, ax, fig, wocno_values, wcno_values):
+        """Generate 2D scatter plot for tuning change analysis."""
+        # Create 2D scatter plot without colors (default blue dots)
+        ax.scatter(wocno_values, wcno_values, alpha=0.7, s=30, edgecolors='black', linewidth=0.5)
+        
+        # Calculate symmetrical limits based on maximum absolute value
+        max_abs_val = max(np.max(np.abs(wocno_values)), np.max(np.abs(wcno_values)))
+        padding = max_abs_val * 0.1
+        limit = max_abs_val + padding
+        
+        # Add diagonal line (x=y) for reference
+        ax.plot([-limit, limit], [-limit, limit], 'k--', alpha=0.5, linewidth=1, label='Unity line (no change)')
+        
+        # Add quadrant lines
+        ax.axhline(y=0, color='gray', linestyle='-', alpha=0.3)
+        ax.axvline(x=0, color='gray', linestyle='-', alpha=0.3)
+        
+        # Calculate quadrant percentages
+        total_points = len(wocno_values)
+        q1 = np.sum((wocno_values > 0) & (wcno_values > 0))  # Top-right: both positive
+        q2 = np.sum((wocno_values < 0) & (wcno_values > 0))  # Top-left: woCNO neg, wCNO pos
+        q3 = np.sum((wocno_values < 0) & (wcno_values < 0))  # Bottom-left: both negative
+        q4 = np.sum((wocno_values > 0) & (wcno_values < 0))  # Bottom-right: woCNO pos, wCNO neg
+        
+        # Calculate percentages
+        q1_pct = (q1 / total_points) * 100
+        q2_pct = (q2 / total_points) * 100
+        q3_pct = (q3 / total_points) * 100
+        q4_pct = (q4 / total_points) * 100
+        
+        # Add quadrant labels with percentages using symmetrical coordinates
+        offset = limit * 0.15  # Offset from edges
+        
+        # Top-right quadrant
+        ax.text(limit - offset, limit - offset, 
+               f'{q1_pct:.1f}%\n({q1})', ha='right', va='top', fontsize=10, fontweight='bold',
+               bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen', alpha=0.7))
+        
+        # Top-left quadrant  
+        ax.text(-limit + offset, limit - offset,
+               f'{q2_pct:.1f}%\n({q2})', ha='left', va='top', fontsize=10, fontweight='bold',
+               bbox=dict(boxstyle='round,pad=0.3', facecolor='lightcoral', alpha=0.7))
+        
+        # Bottom-left quadrant
+        ax.text(-limit + offset, -limit + offset,
+               f'{q3_pct:.1f}%\n({q3})', ha='left', va='bottom', fontsize=10, fontweight='bold',
+               bbox=dict(boxstyle='round,pad=0.3', facecolor='lightblue', alpha=0.7))
+        
+        # Bottom-right quadrant
+        ax.text(limit - offset, -limit + offset,
+               f'{q4_pct:.1f}%\n({q4})', ha='right', va='bottom', fontsize=10, fontweight='bold',
+               bbox=dict(boxstyle='round,pad=0.3', facecolor='lightyellow', alpha=0.7))
+        
+        # Formatting
+        ax.set_xlabel('woCNO AUC Value')
+        ax.set_ylabel('wCNO AUC Value')
+        ax.set_title('Tuning Change Analysis: 2D Scatter Plot', fontsize=14, fontweight='bold')
+        
+        # Set symmetrical limits and equal aspect ratio
+        ax.set_xlim(-limit, limit)
+        ax.set_ylim(-limit, limit)
+        ax.set_aspect('equal')
+        
+        # Add grid
+        ax.grid(True, alpha=0.3)
+        
+        # Add simple legend (only unity line since no colors)
+        ax.legend([plt.Line2D([0], [0], color='black', linestyle='--', alpha=0.5)], 
+                 ['Unity line (no change)'], loc='upper left')
+    
     def generate_tuning_change_figure(self):
         """Generate TuningChange paired plot visualization."""
         try:
@@ -4001,119 +4216,22 @@ class FigureGenerationGUI:
                 raise ValueError(f"Data dimension mismatch: woCNO has {len(wocno_values)} neurons, "
                                f"wCNO has {len(wcno_values)} neurons. Both files must have the same number of neurons.")
             
-            # Create subplots - side by side
+            # Check plot type toggle
+            is_paired_plot = self.tuning_change_paired_plot.get()
+            
+            # Create figure
             fig = self.inspection_fig
-            gs = fig.add_gridspec(1, 2, width_ratios=[1, 1], wspace=0.3)
-            ax_left = fig.add_subplot(gs[0])
-            ax_right = fig.add_subplot(gs[1])
+            ax = fig.add_subplot(111)
             
-            # Determine colors based on woCNO values (left plot)
-            colors = ['green' if val >= 0 else 'red' for val in wocno_values]
-            
-            # Create x positions for jittered display
-            n_neurons = len(wocno_values)
-            x_left = np.zeros(n_neurons) + np.random.normal(0, 0.02, n_neurons)  # Small jitter
-            x_right = np.ones(n_neurons) + np.random.normal(0, 0.02, n_neurons)  # Small jitter
-            
-            # Plot left side (woCNO) - colored by position
-            ax_left.scatter(x_left, wocno_values, c=colors, alpha=0.7, s=30, edgecolors='black', linewidth=0.5)
-            
-            # Plot right side (wCNO) - colored by connection
-            ax_right.scatter(x_right, wcno_values, c=colors, alpha=0.7, s=30, edgecolors='black', linewidth=0.5)
-            
-            # Add connection lines
-            for i in range(n_neurons):
-                ax_left.plot([x_left[i], x_right[i]], [wocno_values[i], wcno_values[i]], 
-                           'k-', alpha=0.3, linewidth=0.5, zorder=0)
-                ax_right.plot([x_left[i], x_right[i]], [wocno_values[i], wcno_values[i]], 
-                           'k-', alpha=0.3, linewidth=0.5, zorder=0)
-            
-            # Calculate and display averages
-            wocno_mean = np.mean(wocno_values)
-            wcno_mean = np.mean(wcno_values)
-            
-            # Add average lines
-            ax_left.axhline(y=wocno_mean, color='blue', linestyle='--', linewidth=2, alpha=0.8)
-            ax_right.axhline(y=wcno_mean, color='blue', linestyle='--', linewidth=2, alpha=0.8)
-            
-            # Add average value text
-            ax_left.text(0.5, 0.98, f'Avg: {wocno_mean:.3f}', transform=ax_left.transAxes, 
-                        ha='center', va='top', fontsize=12, fontweight='bold',
-                        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightblue', alpha=0.7))
-            ax_right.text(0.5, 0.98, f'Avg: {wcno_mean:.3f}', transform=ax_right.transAxes, 
-                         ha='center', va='top', fontsize=12, fontweight='bold',
-                         bbox=dict(boxstyle='round,pad=0.3', facecolor='lightblue', alpha=0.7))
-            
-            # Statistical analysis - separate positive and negative encoders
-            positive_mask = wocno_values >= 0
-            negative_mask = wocno_values < 0
-            
-            if np.sum(positive_mask) > 1:  # Need at least 2 samples for t-test
-                pos_wocno = wocno_values[positive_mask]
-                pos_wcno = wcno_values[positive_mask]
-                pos_tstat, pos_pval = stats.ttest_rel(pos_wocno, pos_wcno)
-                pos_effect_size = (np.mean(pos_wcno) - np.mean(pos_wocno)) / np.std(pos_wocno - pos_wcno)
+            if is_paired_plot:
+                # Generate paired plot
+                self.generate_paired_tuning_plot(ax, fig, wocno_values, wcno_values)
             else:
-                pos_pval, pos_effect_size = np.nan, np.nan
-            
-            if np.sum(negative_mask) > 1:  # Need at least 2 samples for t-test
-                neg_wocno = wocno_values[negative_mask]
-                neg_wcno = wcno_values[negative_mask]
-                neg_tstat, neg_pval = stats.ttest_rel(neg_wocno, neg_wcno)
-                neg_effect_size = (np.mean(neg_wcno) - np.mean(neg_wocno)) / np.std(neg_wocno - neg_wcno)
-            else:
-                neg_pval, neg_effect_size = np.nan, np.nan
-            
-            # Add statistical annotations
-            stats_text = []
-            if not np.isnan(pos_pval):
-                stats_text.append(f"Positive encoders (n={np.sum(positive_mask)}): p={pos_pval:.3f}, d={pos_effect_size:.3f}")
-            if not np.isnan(neg_pval):
-                stats_text.append(f"Negative encoders (n={np.sum(negative_mask)}): p={neg_pval:.3f}, d={neg_effect_size:.3f}")
-            
-            if stats_text:
-                fig.text(0.5, 0.02, '\n'.join(stats_text), ha='center', va='bottom', 
-                        fontsize=10, style='italic',
-                        bbox=dict(boxstyle='round,pad=0.5', facecolor='lightyellow', alpha=0.8))
-            
-            # Formatting
-            ax_left.set_xlim(-0.3, 0.3)
-            ax_right.set_xlim(0.7, 1.3)
-            ax_left.set_xticks([0])
-            ax_right.set_xticks([1])
-            ax_left.set_xticklabels(['woCNO'])
-            ax_right.set_xticklabels(['wCNO'])
-            
-            # Set same y-limits for both plots
-            y_min = min(np.min(wocno_values), np.min(wcno_values))
-            y_max = max(np.max(wocno_values), np.max(wcno_values))
-            y_range = y_max - y_min
-            y_padding = y_range * 0.1
-            ax_left.set_ylim(y_min - y_padding, y_max + y_padding)
-            ax_right.set_ylim(y_min - y_padding, y_max + y_padding)
-            
-            # Labels and title
-            ax_left.set_ylabel('AUC Value')
-            ax_right.set_ylabel('')
-            ax_left.set_title('woCNO Tuning')
-            ax_right.set_title('wCNO Tuning')
-            fig.suptitle('Tuning Change Analysis: Paired Comparison', fontsize=14, fontweight='bold')
-            
-            # Add grid
-            ax_left.grid(True, alpha=0.3)
-            ax_right.grid(True, alpha=0.3)
-            
-            # Add legend
-            from matplotlib.patches import Patch
-            legend_elements = [
-                Patch(facecolor='green', alpha=0.7, label='Positive encoders'),
-                Patch(facecolor='red', alpha=0.7, label='Negative encoders'),
-                plt.Line2D([0], [0], color='blue', linestyle='--', label='Population average')
-            ]
-            fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.92))
+                # Generate 2D scatter plot
+                self.generate_2d_scatter_tuning_plot(ax, fig, wocno_values, wcno_values)
             
             # Set the main axis for compatibility
-            self.inspection_ax = ax_left
+            self.inspection_ax = ax
             
             # Draw the canvas
             self.figure_canvas.draw()
