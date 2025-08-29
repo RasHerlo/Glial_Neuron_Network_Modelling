@@ -656,7 +656,18 @@ class DataAnnotationProcessor(BaseProcessor):
         return matrix_dimensions
     
     def get_vector_length(self, dataset_name: str, dimension_choice: str) -> int:
-        """Get vector length based on dimension choice and existing matrices."""
+        """Get vector length based on dimension choice from dropdown selection."""
+        # Parse the vector length directly from the dropdown selection
+        # Expected format: "rows = 958" or "columns = 2476"
+        if '=' in dimension_choice:
+            try:
+                # Extract the number after the '=' sign
+                vector_length = int(dimension_choice.split('=')[1].strip())
+                return vector_length
+            except (ValueError, IndexError) as e:
+                raise ValueError(f"Could not parse vector length from dimension choice '{dimension_choice}': {e}")
+        
+        # Fallback to original logic if no '=' found (for backwards compatibility)
         matrix_dimensions = self.find_matrix_files(dataset_name)
         
         if not matrix_dimensions:

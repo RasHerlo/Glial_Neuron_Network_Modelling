@@ -3057,7 +3057,13 @@ class FigureGenerationGUI:
                 raster_filename = raster_file
             
             if raster_filename.startswith("Raster_matrix_"):
-                suffix = raster_filename.replace("Raster_matrix_", "").replace(".npy", "")
+                # Extract suffix using the same logic as PCA generation
+                # e.g., "Raster_matrix_assembled_norm01_norm01.npy" -> "norm01"
+                matrix_parts = raster_filename.replace(".npy", "").split('_')
+                if len(matrix_parts) >= 3:
+                    suffix = matrix_parts[-1]  # Last part after underscore
+                else:
+                    suffix = "matrix"  # Fallback
                 pca_folder = f"PCA_{suffix}_columns"
             else:
                 # Fallback - try to find any PCA folder
@@ -3191,7 +3197,13 @@ class FigureGenerationGUI:
                 raster_filename = raster_file
             
             if raster_filename.startswith("Raster_matrix_"):
-                suffix = raster_filename.replace("Raster_matrix_", "").replace(".npy", "")
+                # Extract suffix using the same logic as PCA generation
+                # e.g., "Raster_matrix_assembled_norm01_norm01.npy" -> "norm01"
+                matrix_parts = raster_filename.replace(".npy", "").split('_')
+                if len(matrix_parts) >= 3:
+                    suffix = matrix_parts[-1]  # Last part after underscore
+                else:
+                    suffix = "matrix"  # Fallback
                 pca_folder = f"PCA_{suffix}_columns"
             else:
                 # Fallback - try to find any PCA folder
@@ -3291,7 +3303,13 @@ class FigureGenerationGUI:
                 raster_filename = raster_file
             
             if raster_filename.startswith("Raster_matrix_"):
-                suffix = raster_filename.replace("Raster_matrix_", "").replace(".npy", "")
+                # Extract suffix using the same logic as PCA generation
+                # e.g., "Raster_matrix_assembled_norm01_norm01.npy" -> "norm01"
+                matrix_parts = raster_filename.replace(".npy", "").split('_')
+                if len(matrix_parts) >= 3:
+                    suffix = matrix_parts[-1]  # Last part after underscore
+                else:
+                    suffix = "matrix"  # Fallback
                 pca_folder = f"PCA_{suffix}_columns"
             else:
                 # Fallback - try to find any PCA folder
