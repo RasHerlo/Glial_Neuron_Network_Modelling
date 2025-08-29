@@ -25,6 +25,7 @@ try:
     from mpl_toolkits.mplot3d import Axes3D
     import seaborn as sns
     from scipy.cluster.hierarchy import dendrogram
+    from scipy import stats
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
@@ -78,6 +79,20 @@ class FigureGenerationGUI:
                 "index_point_enabled_default": False,
                 "convert_to_seconds_default": False,
                 "framerate_default": 10.02
+            }
+        },
+        "TuningChange": {
+            "description": "Compare tuning curves between woCNO and wCNO conditions using paired plots",
+            "file_types": [".csv"],
+            "required_files": [
+                {"name": "wocno_tuning", "label": "woCNO tuning", "description": "Tuning data without CNO (.csv)", "pattern": "*woCNO*", "extension": ".csv"},
+                {"name": "wcno_tuning", "label": "wCNO tuning", "description": "Tuning data with CNO (.csv)", "pattern": "*wCNO*", "extension": ".csv"}
+            ],
+            "controls": {
+                "show_averages": True,
+                "connection_line_width": 1.0,
+                "positive_color": "green",
+                "negative_color": "red"
             }
         },
         "EnsembleTraces": {
@@ -728,6 +743,8 @@ class FigureGenerationGUI:
             self.create_matrix_visualization_file_widgets(mode_config)
         elif mode == "TuningCurve":
             self.create_tuning_curve_file_widgets(mode_config)
+        elif mode == "TuningChange":
+            self.create_tuning_change_file_widgets(mode_config)
         elif mode == "EnsembleTraces":
             self.create_ensemble_traces_file_widgets(mode_config)
         elif mode == "PCAManifold":
@@ -1116,6 +1133,78 @@ class FigureGenerationGUI:
         
         ttk.Button(nav_frame, text="▶", width=3,
                   command=self.next_neuron).grid(row=0, column=2, padx=1)
+    
+    def create_tuning_change_file_widgets(self, mode_config):
+        """Create TuningChange-specific file selection widgets."""
+        # Create main container
+        main_container = ttk.Frame(self.file_requirements_container)
+        main_container.pack(fill="x", pady=5)
+        
+        # woCNO tuning file selection
+        wocno_frame = ttk.Frame(main_container)
+        wocno_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(wocno_frame, text="woCNO tuning:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        wocno_var = tk.StringVar()
+        wocno_combo = ttk.Combobox(wocno_frame, textvariable=wocno_var, state="readonly", width=40)
+        wocno_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Filter for tuning CSV files and set default
+        if hasattr(self, 'available_files'):
+            csv_files = self.filter_files_by_type([".csv"])
+            wocno_combo['values'] = csv_files
+            # Auto-detect woCNO file
+            wocno_default = self.find_tuning_file(csv_files, ['woCNO', 'wocno', 'wo_CNO', 'wo_cno'])
+            if wocno_default:
+                wocno_var.set(wocno_default)
+        
+        wocno_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Store reference
+        self.file_selection_widgets['wocno_tuning'] = {
+            'var': wocno_var,
+            'combo': wocno_combo,
+            'frame': wocno_frame,
+            'config': mode_config['required_files'][0]
+        }
+        
+        # wCNO tuning file selection
+        wcno_frame = ttk.Frame(main_container)
+        wcno_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(wcno_frame, text="wCNO tuning:").grid(row=0, column=0, sticky="w", padx=5)
+        
+        wcno_var = tk.StringVar()
+        wcno_combo = ttk.Combobox(wcno_frame, textvariable=wcno_var, state="readonly", width=40)
+        wcno_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        # Filter for tuning CSV files and set default
+        if hasattr(self, 'available_files'):
+            wcno_combo['values'] = csv_files
+            # Auto-detect wCNO file
+            wcno_default = self.find_tuning_file(csv_files, ['wCNO', 'wcno', 'w_CNO', 'w_cno'])
+            if wcno_default:
+                wcno_var.set(wcno_default)
+        
+        wcno_combo.bind('<<ComboboxSelected>>', self.on_required_file_change)
+        
+        # Store reference
+        self.file_selection_widgets['wcno_tuning'] = {
+            'var': wcno_var,
+            'combo': wcno_combo,
+            'frame': wcno_frame,
+            'config': mode_config['required_files'][1]
+        }
+    
+    def find_tuning_file(self, file_list, suffixes):
+        """Find tuning file with specified suffixes."""
+        for file_path in file_list:
+            filename = os.path.basename(file_path)
+            for suffix in suffixes:
+                if suffix in filename:
+                    return file_path
+        return None
     
     def create_ensemble_traces_file_widgets(self, mode_config):
         """Create EnsembleTraces-specific file selection widgets."""
@@ -1559,6 +1648,13 @@ class FigureGenerationGUI:
                     self.file_selection_widgets['raster_matrix']['var'].get() and
                     'annotation' in self.file_selection_widgets and 
                     self.file_selection_widgets['annotation']['var'].get())
+        
+        # For TuningChange, both wocno_tuning and wcno_tuning are required
+        elif mode == "TuningChange":
+            return ('wocno_tuning' in self.file_selection_widgets and 
+                    self.file_selection_widgets['wocno_tuning']['var'].get() and
+                    'wcno_tuning' in self.file_selection_widgets and 
+                    self.file_selection_widgets['wcno_tuning']['var'].get())
         
         # For EnsembleTraces, raster_matrix and clusters are required
         elif mode == "EnsembleTraces":
@@ -2710,6 +2806,8 @@ class FigureGenerationGUI:
             self.generate_matrix_visualization_figure()
         elif mode == "TuningCurve":
             self.generate_tuning_curve_figure()
+        elif mode == "TuningChange":
+            self.generate_tuning_change_figure()
         elif mode == "EnsembleTraces":
             self.generate_ensemble_traces_figure()
         elif mode == "PCAManifold":
@@ -3834,6 +3932,167 @@ class FigureGenerationGUI:
                                   ha='center', va='center', transform=self.inspection_ax.transAxes,
                                   fontsize=10, color='red')
             print(f"TuningCurve error: {e}")
+    
+    def generate_tuning_change_figure(self):
+        """Generate TuningChange paired plot visualization."""
+        try:
+            # Check if required files are selected
+            if ('wocno_tuning' not in self.file_selection_widgets or 
+                not self.file_selection_widgets['wocno_tuning']['var'].get() or
+                'wcno_tuning' not in self.file_selection_widgets or 
+                not self.file_selection_widgets['wcno_tuning']['var'].get()):
+                return
+            
+            # Clear the current figure
+            self.inspection_fig.clear()
+            
+            # Get selected files
+            wocno_file = self.file_selection_widgets['wocno_tuning']['var'].get()
+            wcno_file = self.file_selection_widgets['wcno_tuning']['var'].get()
+            
+            # Construct full paths
+            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            wocno_path = os.path.join(dataset_path, wocno_file)
+            wcno_path = os.path.join(dataset_path, wcno_file)
+            
+            # Load data
+            wocno_data = pd.read_csv(wocno_path)
+            wcno_data = pd.read_csv(wcno_path)
+            
+            # Extract AUC values (assuming single column)
+            wocno_values = wocno_data.iloc[:, 0].values
+            wcno_values = wcno_data.iloc[:, 0].values
+            
+            # Validate data dimensions
+            if len(wocno_values) != len(wcno_values):
+                raise ValueError(f"Data dimension mismatch: woCNO has {len(wocno_values)} neurons, "
+                               f"wCNO has {len(wcno_values)} neurons. Both files must have the same number of neurons.")
+            
+            # Create subplots - side by side
+            fig = self.inspection_fig
+            gs = fig.add_gridspec(1, 2, width_ratios=[1, 1], wspace=0.3)
+            ax_left = fig.add_subplot(gs[0])
+            ax_right = fig.add_subplot(gs[1])
+            
+            # Determine colors based on woCNO values (left plot)
+            colors = ['green' if val >= 0 else 'red' for val in wocno_values]
+            
+            # Create x positions for jittered display
+            n_neurons = len(wocno_values)
+            x_left = np.zeros(n_neurons) + np.random.normal(0, 0.02, n_neurons)  # Small jitter
+            x_right = np.ones(n_neurons) + np.random.normal(0, 0.02, n_neurons)  # Small jitter
+            
+            # Plot left side (woCNO) - colored by position
+            ax_left.scatter(x_left, wocno_values, c=colors, alpha=0.7, s=30, edgecolors='black', linewidth=0.5)
+            
+            # Plot right side (wCNO) - colored by connection
+            ax_right.scatter(x_right, wcno_values, c=colors, alpha=0.7, s=30, edgecolors='black', linewidth=0.5)
+            
+            # Add connection lines
+            for i in range(n_neurons):
+                ax_left.plot([x_left[i], x_right[i]], [wocno_values[i], wcno_values[i]], 
+                           'k-', alpha=0.3, linewidth=0.5, zorder=0)
+                ax_right.plot([x_left[i], x_right[i]], [wocno_values[i], wcno_values[i]], 
+                           'k-', alpha=0.3, linewidth=0.5, zorder=0)
+            
+            # Calculate and display averages
+            wocno_mean = np.mean(wocno_values)
+            wcno_mean = np.mean(wcno_values)
+            
+            # Add average lines
+            ax_left.axhline(y=wocno_mean, color='blue', linestyle='--', linewidth=2, alpha=0.8)
+            ax_right.axhline(y=wcno_mean, color='blue', linestyle='--', linewidth=2, alpha=0.8)
+            
+            # Add average value text
+            ax_left.text(0.5, 0.98, f'Avg: {wocno_mean:.3f}', transform=ax_left.transAxes, 
+                        ha='center', va='top', fontsize=12, fontweight='bold',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightblue', alpha=0.7))
+            ax_right.text(0.5, 0.98, f'Avg: {wcno_mean:.3f}', transform=ax_right.transAxes, 
+                         ha='center', va='top', fontsize=12, fontweight='bold',
+                         bbox=dict(boxstyle='round,pad=0.3', facecolor='lightblue', alpha=0.7))
+            
+            # Statistical analysis - separate positive and negative encoders
+            positive_mask = wocno_values >= 0
+            negative_mask = wocno_values < 0
+            
+            if np.sum(positive_mask) > 1:  # Need at least 2 samples for t-test
+                pos_wocno = wocno_values[positive_mask]
+                pos_wcno = wcno_values[positive_mask]
+                pos_tstat, pos_pval = stats.ttest_rel(pos_wocno, pos_wcno)
+                pos_effect_size = (np.mean(pos_wcno) - np.mean(pos_wocno)) / np.std(pos_wocno - pos_wcno)
+            else:
+                pos_pval, pos_effect_size = np.nan, np.nan
+            
+            if np.sum(negative_mask) > 1:  # Need at least 2 samples for t-test
+                neg_wocno = wocno_values[negative_mask]
+                neg_wcno = wcno_values[negative_mask]
+                neg_tstat, neg_pval = stats.ttest_rel(neg_wocno, neg_wcno)
+                neg_effect_size = (np.mean(neg_wcno) - np.mean(neg_wocno)) / np.std(neg_wocno - neg_wcno)
+            else:
+                neg_pval, neg_effect_size = np.nan, np.nan
+            
+            # Add statistical annotations
+            stats_text = []
+            if not np.isnan(pos_pval):
+                stats_text.append(f"Positive encoders (n={np.sum(positive_mask)}): p={pos_pval:.3f}, d={pos_effect_size:.3f}")
+            if not np.isnan(neg_pval):
+                stats_text.append(f"Negative encoders (n={np.sum(negative_mask)}): p={neg_pval:.3f}, d={neg_effect_size:.3f}")
+            
+            if stats_text:
+                fig.text(0.5, 0.02, '\n'.join(stats_text), ha='center', va='bottom', 
+                        fontsize=10, style='italic',
+                        bbox=dict(boxstyle='round,pad=0.5', facecolor='lightyellow', alpha=0.8))
+            
+            # Formatting
+            ax_left.set_xlim(-0.3, 0.3)
+            ax_right.set_xlim(0.7, 1.3)
+            ax_left.set_xticks([0])
+            ax_right.set_xticks([1])
+            ax_left.set_xticklabels(['woCNO'])
+            ax_right.set_xticklabels(['wCNO'])
+            
+            # Set same y-limits for both plots
+            y_min = min(np.min(wocno_values), np.min(wcno_values))
+            y_max = max(np.max(wocno_values), np.max(wcno_values))
+            y_range = y_max - y_min
+            y_padding = y_range * 0.1
+            ax_left.set_ylim(y_min - y_padding, y_max + y_padding)
+            ax_right.set_ylim(y_min - y_padding, y_max + y_padding)
+            
+            # Labels and title
+            ax_left.set_ylabel('AUC Value')
+            ax_right.set_ylabel('')
+            ax_left.set_title('woCNO Tuning')
+            ax_right.set_title('wCNO Tuning')
+            fig.suptitle('Tuning Change Analysis: Paired Comparison', fontsize=14, fontweight='bold')
+            
+            # Add grid
+            ax_left.grid(True, alpha=0.3)
+            ax_right.grid(True, alpha=0.3)
+            
+            # Add legend
+            from matplotlib.patches import Patch
+            legend_elements = [
+                Patch(facecolor='green', alpha=0.7, label='Positive encoders'),
+                Patch(facecolor='red', alpha=0.7, label='Negative encoders'),
+                plt.Line2D([0], [0], color='blue', linestyle='--', label='Population average')
+            ]
+            fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.92))
+            
+            # Set the main axis for compatibility
+            self.inspection_ax = ax_left
+            
+            # Draw the canvas
+            self.figure_canvas.draw()
+            
+        except Exception as e:
+            # Clear figure and show error
+            self.inspection_fig.clear()
+            self.inspection_ax = self.inspection_fig.add_subplot(111)
+            self.inspection_ax.text(0.5, 0.5, f'Error generating Tuning Change:\n{str(e)}', 
+                                  ha='center', va='center', transform=self.inspection_ax.transAxes,
+                                  fontsize=10, color='red')
+            print(f"TuningChange error: {e}")
     
     def generate_ensemble_traces_figure(self):
         """Generate EnsembleTraces visualization with three-panel layout."""
