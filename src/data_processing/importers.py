@@ -493,6 +493,52 @@ class NPYImporter(BaseImporter):
             print(f"Error saving processed files: {e}")
         
         return saved_files
+    
+    def generate_raster_matrix_files(self, import_result: Dict[str, Any], 
+                                   processed_matrices_dir: str) -> Dict[str, str]:
+        """Generate standardized Raster_* files for processing pipeline compatibility.
+        
+        Args:
+            import_result: Result from import_file method containing raw_array, labels, etc.
+            processed_matrices_dir: Directory to save standardized files
+            
+        Returns:
+            Dict mapping file types to saved file paths
+        """
+        raster_files = {}
+        
+        try:
+            os.makedirs(processed_matrices_dir, exist_ok=True)
+            
+            # 1. Save matrix as Raster_matrix.npy (standard name for processing tools)
+            raster_matrix_path = os.path.join(processed_matrices_dir, "Raster_matrix.npy")
+            np.save(raster_matrix_path, import_result['raw_array'])
+            raster_files['raster_matrix_npy'] = raster_matrix_path
+            
+            # 2. Create Raster_with_labels.csv (matrix with row/column labels applied)
+            matrix_with_labels = import_result['data'].copy()  # This already has labels applied
+            raster_with_labels_path = os.path.join(processed_matrices_dir, "Raster_with_labels.csv")
+            matrix_with_labels.to_csv(raster_with_labels_path, index=True)
+            raster_files['raster_with_labels_csv'] = raster_with_labels_path
+            
+            # 3. Create Raster_row_labels_and_indices.csv (single column: row_labels)
+            row_labels_df = pd.DataFrame({'row_labels': import_result['row_labels']})
+            raster_row_labels_path = os.path.join(processed_matrices_dir, "Raster_row_labels_and_indices.csv")
+            row_labels_df.to_csv(raster_row_labels_path, index=False)
+            raster_files['raster_row_labels_csv'] = raster_row_labels_path
+            
+            # 4. Create Raster_column_labels_and_indices.csv (single column: column_labels)
+            col_labels_df = pd.DataFrame({'column_labels': import_result['col_labels']})
+            raster_col_labels_path = os.path.join(processed_matrices_dir, "Raster_column_labels_and_indices.csv")
+            col_labels_df.to_csv(raster_col_labels_path, index=False)
+            raster_files['raster_col_labels_csv'] = raster_col_labels_path
+            
+            print(f"Generated standardized Raster files in: {processed_matrices_dir}")
+            
+        except Exception as e:
+            print(f"Error generating Raster matrix files: {e}")
+        
+        return raster_files
 
 
 class Suite2pDatasetDetector:

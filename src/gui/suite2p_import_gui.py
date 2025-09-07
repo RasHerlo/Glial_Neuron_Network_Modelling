@@ -438,11 +438,11 @@ Has NaN: {stats['has_nan']}, Has Inf: {stats['has_inf']}"""
                     )
                     continue
                 
-                # Create dataset in database
+                # Create dataset in database (will be updated with final file path later)
                 dataset_id = DatasetOperations.create_dataset(
                     name=dataset_name,
-                    file_path=file_path,
-                    file_format='npy',
+                    file_path=file_path,  # Temporary - will be updated to Raster_with_labels.csv
+                    file_format='csv',  # Set to csv for processing pipeline compatibility
                     description=description,
                     metadata=import_result['metadata']
                 )
@@ -454,7 +454,7 @@ Has NaN: {stats['has_nan']}, Has Inf: {stats['has_inf']}"""
                     use_clean_names=True
                 )
                 
-                # Save processed files
+                # Save processed files in raw directory (preserve original data)
                 base_filename = Path(file_path).stem
                 raw_dir = self.folder_manager.get_raw_data_path(dataset_folder)
                 
@@ -462,11 +462,18 @@ Has NaN: {stats['has_nan']}, Has Inf: {stats['has_inf']}"""
                     import_result, raw_dir, base_filename
                 )
                 
-                # Update dataset with actual file path (point to copied file)
-                if 'labeled_csv' in saved_files:
+                # Generate standardized Raster files in processed/matrices for compatibility
+                processed_matrices_dir = self.folder_manager.get_processed_data_path(dataset_folder, "matrices")
+                raster_files = self.npy_importer.generate_raster_matrix_files(
+                    import_result, processed_matrices_dir
+                )
+                
+                # Update dataset to point to standardized Raster_with_labels.csv for compatibility
+                if 'raster_with_labels_csv' in raster_files:
                     DatasetOperations.update_dataset(
                         dataset_id, 
-                        file_path=saved_files['labeled_csv']
+                        file_path=raster_files['raster_with_labels_csv'],
+                        file_format='csv'  # Set format to csv for processing compatibility
                     )
                 
                 imported_datasets.append({

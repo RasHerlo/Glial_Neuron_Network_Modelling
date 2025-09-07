@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Any
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from src.database.operations import DatasetOperations, FigureOperations, ProcessingJobOperations
+from src.utils.folder_manager import DatasetFolderManager
 
 # Import matplotlib for figure display
 try:
@@ -661,6 +662,14 @@ class FigureGenerationGUI:
             if hasattr(self, 'sorting_frame') and self.sorting_frame.winfo_ismapped():
                 self.update_sorting_vectors_from_labels()
     
+    def get_workspace_dataset_path(self):
+        """Get workspace-aware dataset path for the selected dataset."""
+        if not self.selected_dataset:
+            return None
+        
+        folder_manager = DatasetFolderManager()
+        return folder_manager.get_dataset_folder(self.selected_dataset.id, self.selected_dataset.name)
+    
     def load_dataset_files(self):
         """Load available files for the selected dataset."""
         if not self.selected_dataset:
@@ -669,23 +678,30 @@ class FigureGenerationGUI:
         files = []
         
         try:
-            # Get raw files from filesystem
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            # Get workspace-aware dataset path
+            dataset_folder = self.get_workspace_dataset_path()
+            
+            if not dataset_folder:
+                print(f"Dataset folder not found for: {self.selected_dataset.name}")
+                self.available_files = []
+                return
+            
+            folder_manager = DatasetFolderManager()
             
             # Raw files
-            raw_path = os.path.join(dataset_path, "raw")
+            raw_path = folder_manager.get_raw_data_path(dataset_folder)
             if os.path.exists(raw_path):
                 for file in os.listdir(raw_path):
                     if file.endswith(('.csv', '.txt', '.xlsx', '.npy', '.npz')):
                         files.append(f"raw/{file}")
             
             # Processed files
-            processed_path = os.path.join(dataset_path, "processed")
+            processed_path = folder_manager.get_processed_data_path(dataset_folder)
             if os.path.exists(processed_path):
                 for root, dirs, filenames in os.walk(processed_path):
                     for file in filenames:
                         if file.endswith(('.csv', '.txt', '.xlsx', '.npy', '.npz')):
-                            rel_path = os.path.relpath(os.path.join(root, file), dataset_path)
+                            rel_path = os.path.relpath(os.path.join(root, file), dataset_folder)
                             files.append(rel_path.replace('\\', '/'))  # Normalize path separators
             
             # Store available files for use in Required Files section
@@ -1383,7 +1399,9 @@ class FigureGenerationGUI:
             
         try:
             # Load cluster file to get column names
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return
             cluster_path = os.path.join(dataset_path, cluster_file)
             cluster_df = pd.read_csv(cluster_path)
             
@@ -1419,7 +1437,9 @@ class FigureGenerationGUI:
             
         try:
             # Load cluster data
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return
             cluster_path = os.path.join(dataset_path, cluster_file)
             cluster_df = pd.read_csv(cluster_path)
             
@@ -1609,7 +1629,9 @@ class FigureGenerationGUI:
             return []
         
         binary_vector_files = []
-        dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+        dataset_path = self.get_workspace_dataset_path()
+        if not dataset_path:
+            return
         
         # Only check CSV files in the matrices folder
         csv_files = [f for f in self.available_files if f.endswith('.csv') and 'matrices' in f]
@@ -2192,7 +2214,12 @@ class FigureGenerationGUI:
             return
         
         try:
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            # Get workspace-aware dataset path
+            dataset_folder = self.get_workspace_dataset_path()
+            
+            if not dataset_folder:
+                print(f"Dataset folder not found for: {self.selected_dataset.name}")
+                return
             
             # Auto-detect row labels files and get sorting options
             row_sorting_options = []
@@ -2200,7 +2227,7 @@ class FigureGenerationGUI:
                 row_label_files = self.filter_files_by_type([".csv"], "*row_labels*")
                 if row_label_files:
                     # Use the first available row labels file
-                    row_labels_path = os.path.join(dataset_path, row_label_files[0])
+                    row_labels_path = os.path.join(dataset_folder, row_label_files[0])
                     if os.path.exists(row_labels_path):
                         try:
                             row_labels_df = pd.read_csv(row_labels_path)
@@ -2220,7 +2247,7 @@ class FigureGenerationGUI:
                     column_label_files = self.filter_files_by_type([".csv"], "*column_labels*")
                     if column_label_files:
                         # Use the first available column labels file
-                        column_labels_path = os.path.join(dataset_path, column_label_files[0])
+                        column_labels_path = os.path.join(dataset_folder, column_label_files[0])
                         if os.path.exists(column_labels_path):
                             try:
                                 column_labels_df = pd.read_csv(column_labels_path)
@@ -2387,7 +2414,11 @@ class FigureGenerationGUI:
             return None
         
         try:
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            # Get workspace-aware dataset path
+            dataset_folder = self.get_workspace_dataset_path()
+            
+            if not dataset_folder:
+                raise ValueError(f"Dataset folder not found for: {self.selected_dataset.name}")
             
             # Auto-detect the appropriate label file based on vector_type
             if vector_type == 'row':
@@ -2423,7 +2454,7 @@ class FigureGenerationGUI:
                 raise ValueError(f"Invalid vector_type: {vector_type}. Must be 'row' or 'column'")
             
             # Load the appropriate label file
-            file_path = os.path.join(dataset_path, labels_file)
+            file_path = os.path.join(dataset_folder, labels_file)
             
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"Labels file not found: {file_path}")
@@ -2451,7 +2482,9 @@ class FigureGenerationGUI:
             return None
             
         try:
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return None
             linkage_path = os.path.join(dataset_path, "processed", "matrices", 
                                       sorting_vector_name, "HAC_norm01_linkage_matrix.npy")
             
@@ -2751,7 +2784,9 @@ class FigureGenerationGUI:
         
         try:
             # Construct full file path
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return
             file_path = os.path.join(dataset_path, self.selected_file)
             
             # Load data based on file extension
@@ -2881,7 +2916,9 @@ class FigureGenerationGUI:
             
             # Load raster matrix
             raster_file = self.file_selection_widgets['raster_matrix']['var'].get()
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return
             raster_path = os.path.join(dataset_path, raster_file)
             
             # Load matrix data
@@ -3025,7 +3062,9 @@ class FigureGenerationGUI:
             
             # Load raster matrix
             raster_file = self.file_selection_widgets['raster_matrix']['var'].get()
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return
             raster_path = os.path.join(dataset_path, raster_file)
             
             # Load matrix data
@@ -3163,7 +3202,9 @@ class FigureGenerationGUI:
                 return raster_matrix
             
             # Find row labels file to get sorting data
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return
             row_label_files = self.filter_files_by_type([".csv"], "*row_labels*")
             
             if not row_label_files:
@@ -3584,7 +3625,9 @@ class FigureGenerationGUI:
             
             # Load matrix
             matrix_file = self.file_selection_widgets['matrix']['var'].get()
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return
             matrix_path = os.path.join(dataset_path, matrix_file)
             
             # Load matrix data
@@ -3742,7 +3785,9 @@ class FigureGenerationGUI:
             
             # Load raster matrix
             raster_file = self.file_selection_widgets['raster_matrix']['var'].get()
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return
             raster_path = os.path.join(dataset_path, raster_file)
             raster_matrix = np.load(raster_path)
             self.current_raster_data = raster_matrix  # Store for navigation
@@ -4199,7 +4244,9 @@ class FigureGenerationGUI:
                 raise ValueError("Both woCNO and wCNO tuning files must be selected")
             
             # Construct full paths
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return
             wocno_path = os.path.join(dataset_path, wocno_file)
             wcno_path = os.path.join(dataset_path, wcno_file)
             
@@ -4267,7 +4314,9 @@ class FigureGenerationGUI:
                 return
             
             # Load data files
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return
             
             # Load raster matrix
             raster_file = self.file_selection_widgets['raster_matrix']['var'].get()
@@ -4572,7 +4621,9 @@ class FigureGenerationGUI:
     def apply_axis_labels(self, raster_path, labels_file, axis, axis_length):
         """Apply labels to the specified axis with equal spacing."""
         try:
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return
             labels_path = os.path.join(dataset_path, labels_file)
             
             # Load labels
@@ -5098,7 +5149,9 @@ class FigureGenerationGUI:
             
             # Load raster matrix
             raster_file = self.file_selection_widgets['raster_matrix']['var'].get()
-            dataset_path = os.path.join("data", "datasets", self.selected_dataset.name)
+            dataset_path = self.get_workspace_dataset_path()
+            if not dataset_path:
+                return
             raster_path = os.path.join(dataset_path, raster_file)
             raster_matrix = np.load(raster_path)
             

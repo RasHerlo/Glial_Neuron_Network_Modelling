@@ -932,10 +932,17 @@ class DataProcessingGUI:
     def update_default_browse_path(self):
         """Update the default browse path based on selected dataset."""
         if hasattr(self, 'selected_dataset') and self.selected_dataset:
-            self.default_browse_path = os.path.join("data", "datasets", 
-                                                  self.selected_dataset.name, "processed")
+            from ..utils.folder_manager import DatasetFolderManager
+            folder_manager = DatasetFolderManager()
+            dataset_folder = folder_manager.get_dataset_folder(self.selected_dataset.id, self.selected_dataset.name)
+            if dataset_folder:
+                self.default_browse_path = folder_manager.get_processed_data_path(dataset_folder)
+            else:
+                self.default_browse_path = folder_manager.datasets_dir
         else:
-            self.default_browse_path = os.path.join("data", "datasets")
+            from ..utils.folder_manager import DatasetFolderManager
+            folder_manager = DatasetFolderManager()
+            self.default_browse_path = folder_manager.datasets_dir
     
     def browse_csv_file(self):
         """Open file browser to select CSV file."""
@@ -945,7 +952,9 @@ class DataProcessingGUI:
         
         # Make sure the path exists
         if not os.path.exists(self.default_browse_path):
-            self.default_browse_path = os.path.join("data", "datasets")
+            from ..utils.folder_manager import DatasetFolderManager
+            folder_manager = DatasetFolderManager()
+            self.default_browse_path = folder_manager.datasets_dir
         
         file_path = filedialog.askopenfilename(
             title="Select CSV File",
@@ -1019,8 +1028,15 @@ class DataProcessingGUI:
         else:  # Column Indexing
             target_file = f"Raster_column_labels_and_indices.csv"
         
-        target_path = os.path.join("data", "datasets", self.selected_dataset.name, 
-                                 "processed", "matrices", target_file)
+        # Get workspace-aware target path
+        from ..utils.folder_manager import DatasetFolderManager
+        folder_manager = DatasetFolderManager()
+        dataset_folder = folder_manager.get_dataset_folder(self.selected_dataset.id, self.selected_dataset.name)
+        if dataset_folder:
+            matrices_path = folder_manager.get_processed_data_path(dataset_folder, "matrices")
+            target_path = os.path.join(matrices_path, target_file)
+        else:
+            target_path = None
         
         # Check if target file exists and if column already exists
         if os.path.exists(target_path):
@@ -1099,7 +1115,7 @@ class DataProcessingGUI:
             
             self.dataset_objects = {}
             for dataset in datasets:
-                display_text = f"{dataset.name} ({dataset.file_format or 'unknown'})"
+                display_text = dataset.name  # Show dataset name without format suffix
                 self.datasets_listbox.insert(tk.END, display_text)
                 self.dataset_objects[display_text] = dataset
                 
@@ -1457,9 +1473,34 @@ class DataProcessingGUI:
             return
         
         try:
-            # Load the matrices to get their shapes
-            base_matrix_path = os.path.join("data", "datasets", base_set, "processed", "matrices", f"{base_matrix}.npy")
-            add_matrix_path = os.path.join("data", "datasets", add_set, "processed", "matrices", f"{add_matrix}.npy")
+            # Load the matrices to get their shapes using workspace-aware paths
+            from ..utils.folder_manager import DatasetFolderManager
+            from ..database.operations import DatasetOperations
+            folder_manager = DatasetFolderManager()
+            
+            # Get base matrix path
+            base_dataset = DatasetOperations.get_dataset_by_name(base_set)
+            if base_dataset:
+                base_dataset_folder = folder_manager.get_dataset_folder(base_dataset.id, base_set)
+                if base_dataset_folder:
+                    base_matrices_path = folder_manager.get_processed_data_path(base_dataset_folder, "matrices")
+                    base_matrix_path = os.path.join(base_matrices_path, f"{base_matrix}.npy")
+                else:
+                    base_matrix_path = None
+            else:
+                base_matrix_path = None
+            
+            # Get add matrix path
+            add_dataset = DatasetOperations.get_dataset_by_name(add_set)
+            if add_dataset:
+                add_dataset_folder = folder_manager.get_dataset_folder(add_dataset.id, add_set)
+                if add_dataset_folder:
+                    add_matrices_path = folder_manager.get_processed_data_path(add_dataset_folder, "matrices")
+                    add_matrix_path = os.path.join(add_matrices_path, f"{add_matrix}.npy")
+                else:
+                    add_matrix_path = None
+            else:
+                add_matrix_path = None
             
             if not os.path.exists(base_matrix_path):
                 messagebox.showerror("File Not Found", f"Base matrix file not found: {base_matrix_path}")

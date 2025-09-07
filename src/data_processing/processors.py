@@ -13,6 +13,7 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
 from ..database.operations import DatasetOperations, ProcessingJobOperations
+from ..utils.folder_manager import DatasetFolderManager
 
 
 class BaseProcessor:
@@ -187,8 +188,17 @@ class MatrixExtractionProcessor(BaseProcessor):
     def _save_matrix_files(self, matrix: pd.DataFrame, row_labels: List[str], 
                           col_labels: List[str], dataset_name: str, matrix_name: str) -> str:
         """Save matrix files in the appropriate directory structure."""
-        # Create output directory
-        output_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+        # Get workspace-aware output directory
+        folder_manager = DatasetFolderManager()
+        dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+        if not dataset:
+            raise ValueError(f"Dataset '{dataset_name}' not found")
+        
+        dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+        if not dataset_folder:
+            raise ValueError(f"Dataset folder not found for '{dataset_name}'")
+        
+        output_dir = folder_manager.get_processed_data_path(dataset_folder, "matrices")
         os.makedirs(output_dir, exist_ok=True)
         
         # Save matrix with labels as CSV
@@ -427,7 +437,16 @@ class MatrixModificationProcessor(BaseProcessor):
     
     def find_matrix_files(self, dataset_name: str) -> List[str]:
         """Find all .npy files in the dataset's processed/matrices folder."""
-        matrices_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+        folder_manager = DatasetFolderManager()
+        dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+        if not dataset:
+            return []
+        
+        dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+        if not dataset_folder:
+            return []
+        
+        matrices_path = folder_manager.get_processed_data_path(dataset_folder, "matrices")
         
         if not os.path.exists(matrices_path):
             return []
@@ -501,8 +520,28 @@ class MatrixModificationProcessor(BaseProcessor):
                     'message': 'No matrix selected for modification'
                 }
             
-            # Construct matrix file path
-            matrix_file_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", f"{matrix_name}.npy")
+            # Construct matrix file path using workspace-aware folder manager
+            folder_manager = DatasetFolderManager()
+            dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+            if not dataset:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Dataset "{dataset_name}" not found'
+                }
+            
+            dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+            if not dataset_folder:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Dataset folder not found for "{dataset_name}"'
+                }
+            
+            matrices_path = folder_manager.get_processed_data_path(dataset_folder, "matrices")
+            matrix_file_path = os.path.join(matrices_path, f"{matrix_name}.npy")
             
             # Validate matrix file exists
             if not os.path.exists(matrix_file_path):
@@ -548,7 +587,7 @@ class MatrixModificationProcessor(BaseProcessor):
             
             # Step 4: Save modified matrix (80%)
             update_progress(80.0)
-            output_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+            output_dir = matrices_path  # Use the same workspace-aware path we already resolved
             os.makedirs(output_dir, exist_ok=True)
             
             # Save modified matrix
@@ -635,7 +674,16 @@ class DataAnnotationProcessor(BaseProcessor):
     
     def find_matrix_files(self, dataset_name: str) -> Dict[str, tuple]:
         """Find all .npy matrix files and return their dimensions."""
-        matrices_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+        folder_manager = DatasetFolderManager()
+        dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+        if not dataset:
+            return {}
+        
+        dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+        if not dataset_folder:
+            return {}
+        
+        matrices_path = folder_manager.get_processed_data_path(dataset_folder, "matrices")
         
         if not os.path.exists(matrices_path):
             return {}
@@ -811,7 +859,27 @@ class DataAnnotationProcessor(BaseProcessor):
             
             # Step 5: Save annotation file (90%)
             update_progress(90.0)
-            output_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+            # Get workspace-aware output directory
+            folder_manager = DatasetFolderManager()
+            dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+            if not dataset:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Dataset "{dataset_name}" not found'
+                }
+            
+            dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+            if not dataset_folder:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Dataset folder not found for "{dataset_name}"'
+                }
+            
+            output_dir = folder_manager.get_processed_data_path(dataset_folder, "matrices")
             os.makedirs(output_dir, exist_ok=True)
             
             # Save as CSV file
@@ -949,7 +1017,28 @@ class IndexingProcessor(BaseProcessor):
             else:  # Column Indexing
                 target_file = f"Raster_column_labels_and_indices.csv"
             
-            target_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", target_file)
+            # Get workspace-aware target path
+            folder_manager = DatasetFolderManager()
+            dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+            if not dataset:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Dataset "{dataset_name}" not found'
+                }
+            
+            dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+            if not dataset_folder:
+                return {
+                    'success': False,
+                    'data': None,
+                    'statistics': None,
+                    'message': f'Dataset folder not found for "{dataset_name}"'
+                }
+            
+            matrices_path = folder_manager.get_processed_data_path(dataset_folder, "matrices")
+            target_path = os.path.join(matrices_path, target_file)
             
             # Check if target file exists and load it
             if os.path.exists(target_path):
@@ -1052,7 +1141,16 @@ class RuzickaSimilarityProcessor(BaseProcessor):
     
     def find_matrix_files(self, dataset_name: str) -> List[str]:
         """Find all .npy files in the dataset's processed/matrices folder."""
-        matrices_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+        folder_manager = DatasetFolderManager()
+        dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+        if not dataset:
+            return []
+        
+        dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+        if not dataset_folder:
+            return []
+        
+        matrices_path = folder_manager.get_processed_data_path(dataset_folder, "matrices")
         
         if not os.path.exists(matrices_path):
             return []
@@ -1127,8 +1225,24 @@ class RuzickaSimilarityProcessor(BaseProcessor):
                     'message': 'No matrix selected for Ruzicka similarity calculation'
                 }
             
-            # Construct matrix file path
-            matrix_file_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", f"{matrix_name}.npy")
+            # Construct matrix file path using workspace-aware folder manager
+            folder_manager = DatasetFolderManager()
+            dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+            if not dataset:
+                return {
+                    'success': False,
+                    'message': f'Dataset "{dataset_name}" not found'
+                }
+            
+            dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+            if not dataset_folder:
+                return {
+                    'success': False,
+                    'message': f'Dataset folder not found for "{dataset_name}"'
+                }
+            
+            matrices_path = folder_manager.get_processed_data_path(dataset_folder, "matrices")
+            matrix_file_path = os.path.join(matrices_path, f"{matrix_name}.npy")
             
             # Validate matrix file exists
             if not os.path.exists(matrix_file_path):
@@ -1204,8 +1318,24 @@ class RuzickaSimilarityProcessor(BaseProcessor):
                     'message': 'No matrix selected for Ruzicka similarity calculation'
                 }
             
-            # Construct matrix file path
-            matrix_file_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", f"{matrix_name}.npy")
+            # Construct matrix file path using workspace-aware folder manager
+            folder_manager = DatasetFolderManager()
+            dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+            if not dataset:
+                return {
+                    'success': False,
+                    'message': f'Dataset "{dataset_name}" not found'
+                }
+            
+            dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+            if not dataset_folder:
+                return {
+                    'success': False,
+                    'message': f'Dataset folder not found for "{dataset_name}"'
+                }
+            
+            matrices_path = folder_manager.get_processed_data_path(dataset_folder, "matrices")
+            matrix_file_path = os.path.join(matrices_path, f"{matrix_name}.npy")
             
             # Validate matrix file exists
             if not os.path.exists(matrix_file_path):
@@ -1239,7 +1369,7 @@ class RuzickaSimilarityProcessor(BaseProcessor):
             
             # Step 4: Save similarity matrix (90%)
             update_progress(90.0)
-            output_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+            output_dir = matrices_path  # Use the same workspace-aware path we already resolved
             os.makedirs(output_dir, exist_ok=True)
             
             # Save as .npy file
@@ -1312,7 +1442,16 @@ class HierarchicalClusteringProcessor(BaseProcessor):
     
     def find_matrix_files(self, dataset_name: str) -> List[str]:
         """Find all .npy files in the dataset's processed/matrices folder."""
-        matrices_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+        folder_manager = DatasetFolderManager()
+        dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+        if not dataset:
+            return []
+        
+        dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+        if not dataset_folder:
+            return []
+        
+        matrices_path = folder_manager.get_processed_data_path(dataset_folder, "matrices")
         
         if not os.path.exists(matrices_path):
             return []
@@ -1535,8 +1674,24 @@ class HierarchicalClusteringProcessor(BaseProcessor):
             # Determine if clustering rows or columns
             cluster_rows = clustering_dimension == 'Cluster Rows (Neurons)'
             
-            # Construct matrix file path
-            matrix_file_path = os.path.join("data", "datasets", dataset_name, "processed", "matrices", f"{matrix_name}.npy")
+            # Construct matrix file path using workspace-aware folder manager
+            folder_manager = DatasetFolderManager()
+            dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+            if not dataset:
+                return {
+                    'success': False,
+                    'message': f'Dataset "{dataset_name}" not found'
+                }
+            
+            dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+            if not dataset_folder:
+                return {
+                    'success': False,
+                    'message': f'Dataset folder not found for "{dataset_name}"'
+                }
+            
+            matrices_path = folder_manager.get_processed_data_path(dataset_folder, "matrices")
+            matrix_file_path = os.path.join(matrices_path, f"{matrix_name}.npy")
             
             # Validate matrix file exists
             if not os.path.exists(matrix_file_path):
@@ -1583,8 +1738,8 @@ class HierarchicalClusteringProcessor(BaseProcessor):
             
             # Step 5: Save clustering results (90%)
             update_progress(90.0)
-            # Create output directory with folder structure: data/datasets/{dataset}/processed/matrices/{HAC_method_metric}/
-            base_matrices_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+            # Create output directory with folder structure: {workspace}/datasets/{dataset}/processed/matrices/{HAC_method_metric}/
+            base_matrices_dir = matrices_path  # Use the same workspace-aware path we already resolved
             output_dir = os.path.join(base_matrices_dir, folder_name)
             os.makedirs(output_dir, exist_ok=True)
             
@@ -1694,7 +1849,8 @@ class MatrixAssembleProcessor(BaseProcessor):
     
     def find_dataset_folders(self) -> List[str]:
         """Find available dataset folders in the datasets directory."""
-        datasets_dir = os.path.join("data", "datasets")
+        folder_manager = DatasetFolderManager()
+        datasets_dir = folder_manager.datasets_dir
         
         if not os.path.exists(datasets_dir):
             return []
@@ -1709,7 +1865,16 @@ class MatrixAssembleProcessor(BaseProcessor):
     
     def find_raster_matrices(self, dataset_name: str) -> List[str]:
         """Find available Raster matrices for the given dataset."""
-        matrix_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+        folder_manager = DatasetFolderManager()
+        dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+        if not dataset:
+            return []
+        
+        dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+        if not dataset_folder:
+            return []
+        
+        matrix_dir = folder_manager.get_processed_data_path(dataset_folder, "matrices")
         
         if not os.path.exists(matrix_dir):
             return []
@@ -1777,14 +1942,47 @@ class MatrixAssembleProcessor(BaseProcessor):
             if progress_callback:
                 progress_callback(5.0)
             
-            base_matrix_path = os.path.join("data", "datasets", base_set, "processed", "matrices", f"{base_matrix}.npy")
+            # Get workspace-aware paths for base matrix
+            folder_manager = DatasetFolderManager()
+            base_dataset = DatasetOperations.get_dataset_by_name(base_set)
+            if not base_dataset:
+                return {
+                    'success': False,
+                    'message': f'Base dataset "{base_set}" not found'
+                }
+            
+            base_dataset_folder = folder_manager.get_dataset_folder(base_dataset.id, base_set)
+            if not base_dataset_folder:
+                return {
+                    'success': False,
+                    'message': f'Base dataset folder not found for "{base_set}"'
+                }
+            
+            base_matrices_path = folder_manager.get_processed_data_path(base_dataset_folder, "matrices")
+            base_matrix_path = os.path.join(base_matrices_path, f"{base_matrix}.npy")
             base_data = np.load(base_matrix_path)
             
             if progress_callback:
                 progress_callback(20.0)
             
             # Step 2: Load add matrix (20-40%)
-            add_matrix_path = os.path.join("data", "datasets", add_set, "processed", "matrices", f"{add_matrix}.npy")
+            # Get workspace-aware paths for add matrix
+            add_dataset = DatasetOperations.get_dataset_by_name(add_set)
+            if not add_dataset:
+                return {
+                    'success': False,
+                    'message': f'Add dataset "{add_set}" not found'
+                }
+            
+            add_dataset_folder = folder_manager.get_dataset_folder(add_dataset.id, add_set)
+            if not add_dataset_folder:
+                return {
+                    'success': False,
+                    'message': f'Add dataset folder not found for "{add_set}"'
+                }
+            
+            add_matrices_path = folder_manager.get_processed_data_path(add_dataset_folder, "matrices")
+            add_matrix_path = os.path.join(add_matrices_path, f"{add_matrix}.npy")
             add_data = np.load(add_matrix_path)
             
             if progress_callback:
@@ -1807,8 +2005,9 @@ class MatrixAssembleProcessor(BaseProcessor):
                 progress_callback(70.0)
             
             # Step 5: Create new dataset folder structure (70-80%)
-            new_dataset_dir = os.path.join("data", "datasets", new_dataset_name)
-            new_matrices_dir = os.path.join(new_dataset_dir, "processed", "matrices")
+            # Create new dataset using workspace-aware folder manager
+            new_dataset_folder = folder_manager.create_dataset_folder(999999, new_dataset_name)  # Temporary ID
+            new_matrices_dir = folder_manager.get_processed_data_path(new_dataset_folder, "matrices")
             
             os.makedirs(new_matrices_dir, exist_ok=True)
             
@@ -1888,7 +2087,16 @@ class DimensionalityReductionProcessor(BaseProcessor):
     
     def find_matrix_files(self, dataset_name: str) -> List[str]:
         """Find available matrix files for the given dataset."""
-        matrix_dir = os.path.join("data", "datasets", dataset_name, "processed", "matrices")
+        folder_manager = DatasetFolderManager()
+        dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+        if not dataset:
+            return []
+        
+        dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+        if not dataset_folder:
+            return []
+        
+        matrix_dir = folder_manager.get_processed_data_path(dataset_folder, "matrices")
         
         if not os.path.exists(matrix_dir):
             return []
@@ -1982,8 +2190,24 @@ class DimensionalityReductionProcessor(BaseProcessor):
             if progress_callback:
                 progress_callback(0.0)
             
-            matrix_path = os.path.join("data", "datasets", dataset_name, 
-                                     "processed", "matrices", f"{matrix_name}.npy")
+            # Get workspace-aware matrix path
+            folder_manager = DatasetFolderManager()
+            dataset = DatasetOperations.get_dataset_by_name(dataset_name)
+            if not dataset:
+                return {
+                    'success': False,
+                    'message': f'Dataset "{dataset_name}" not found'
+                }
+            
+            dataset_folder = folder_manager.get_dataset_folder(dataset.id, dataset_name)
+            if not dataset_folder:
+                return {
+                    'success': False,
+                    'message': f'Dataset folder not found for "{dataset_name}"'
+                }
+            
+            matrices_path = folder_manager.get_processed_data_path(dataset_folder, "matrices")
+            matrix_path = os.path.join(matrices_path, f"{matrix_name}.npy")
             
             if not os.path.exists(matrix_path):
                 return {
@@ -2055,9 +2279,9 @@ class DimensionalityReductionProcessor(BaseProcessor):
                 progress_callback(70.0)
             
             # Step 4: Saving results (70-90%)
-            # Create output directory
-            output_dir = os.path.join("data", "datasets", dataset_name, 
-                                    "processed", "pca", output_filename)
+            # Create output directory using workspace-aware path
+            pca_path = folder_manager.get_processed_data_path(dataset_folder, "pca")
+            output_dir = os.path.join(pca_path, output_filename)
             os.makedirs(output_dir, exist_ok=True)
             
             # Save principal components
