@@ -7,7 +7,7 @@ from datetime import datetime
 import os
 
 from .connection import get_database
-from .models import Dataset, ProcessingJob, Figure, ProcessedData
+from .models import Dataset, ProcessingJob, Figure, ProcessedData, DatasetRelationship
 
 
 class DatasetOperations:
@@ -494,3 +494,174 @@ class ProcessedDataOperations:
         """
         results = db.execute_query(query, (dataset_id,))
         return [row[0] for row in results]
+
+
+class DatasetRelationshipOperations:
+    """Database operations for dataset relationships."""
+    
+    @staticmethod
+    def create_relationship(parent_dataset_id: Optional[int], child_dataset_id: int,
+                          relationship_type: str, channel_info: Dict[str, Any] = None,
+                          metadata: Dict[str, Any] = None) -> int:
+        """Create a new dataset relationship."""
+        db = get_database()
+        
+        query = """
+            INSERT INTO dataset_relationships 
+            (parent_dataset_id, child_dataset_id, relationship_type, channel_info, metadata)
+            VALUES (?, ?, ?, ?, ?)
+        """
+        
+        return db.execute_insert(query, (
+            parent_dataset_id, child_dataset_id, relationship_type, 
+            channel_info or {}, metadata or {}
+        ))
+    
+    @staticmethod
+    def get_relationship(relationship_id: int) -> Optional[DatasetRelationship]:
+        """Get a relationship by ID."""
+        db = get_database()
+        query = "SELECT * FROM dataset_relationships WHERE id = ?"
+        result = db.execute_one(query, (relationship_id,))
+        
+        if result:
+            return DatasetRelationship(
+                id=result[0], parent_dataset_id=result[1], child_dataset_id=result[2],
+                relationship_type=result[3], channel_info=result[4] or {},
+                metadata=result[5] or {},
+                created_at=datetime.fromisoformat(result[6]) if result[6] else None
+            )
+        return None
+    
+    @staticmethod
+    def get_related_datasets(dataset_id: int, relationship_type: str = None) -> List[DatasetRelationship]:
+        """Get all datasets related to the given dataset ID."""
+        db = get_database()
+        
+        if relationship_type:
+            query = """
+                SELECT * FROM dataset_relationships 
+                WHERE (parent_dataset_id = ? OR child_dataset_id = ?) 
+                AND relationship_type = ?
+                ORDER BY created_at DESC
+            """
+            results = db.execute_query(query, (dataset_id, dataset_id, relationship_type))
+        else:
+            query = """
+                SELECT * FROM dataset_relationships 
+                WHERE parent_dataset_id = ? OR child_dataset_id = ?
+                ORDER BY created_at DESC
+            """
+            results = db.execute_query(query, (dataset_id, dataset_id))
+        
+        relationships = []
+        for result in results:
+            relationships.append(DatasetRelationship(
+                id=result[0], parent_dataset_id=result[1], child_dataset_id=result[2],
+                relationship_type=result[3], channel_info=result[4] or {},
+                metadata=result[5] or {},
+                created_at=datetime.fromisoformat(result[6]) if result[6] else None
+            ))
+        
+        return relationships
+    
+    @staticmethod
+    def get_channel_pairs(relationship_type: str = "channel_pair") -> List[List[Dataset]]:
+        """Get all channel pairs as lists of related datasets."""
+        db = get_database()
+        
+        # Get all relationships of the specified type
+        query = """
+            SELECT DISTINCT parent_dataset_id, child_dataset_id 
+            FROM dataset_relationships 
+            WHERE relationship_type = ?
+            AND parent_dataset_id IS NOT NULL
+        """
+        results = db.execute_query(query, (relationship_type,))
+        
+        pairs = []
+        processed_pairs = set()
+        
+        for parent_id, child_id in results:
+            # Avoid duplicate pairs
+            pair_key = tuple(sorted([parent_id, child_id]))
+            if pair_key in processed_pairs:
+                continue
+            processed_pairs.add(pair_key)
+            
+            # Get both datasets
+            parent_dataset = DatasetOperations.get_dataset(parent_id)
+            child_dataset = DatasetOperations.get_dataset(child_id)
+            
+            if parent_dataset and child_dataset:
+                pairs.append([parent_dataset, child_dataset])
+        
+        return pairs
+    
+    @staticmethod
+    def link_channel_datasets(dataset_a_id: int, dataset_b_id: int, 
+                            pair_id: str, metadata: Dict[str, Any] = None) -> List[int]:
+        """Link two datasets as a channel pair."""
+        db = get_database()
+        
+        # Create bidirectional relationships
+        relationship_ids = []
+        
+        # A -> B relationship
+        rel_a_id = DatasetRelationshipOperations.create_relationship(
+            parent_dataset_id=dataset_a_id,
+            child_dataset_id=dataset_b_id,
+            relationship_type="channel_pair",
+            channel_info={'pair_id': pair_id, 'channel': 'A', 'partner_channel': 'B'},
+            metadata=metadata or {}
+        )
+        relationship_ids.append(rel_a_id)
+        
+        # B -> A relationship
+        rel_b_id = DatasetRelationshipOperations.create_relationship(
+            parent_dataset_id=dataset_b_id,
+            child_dataset_id=dataset_a_id,
+            relationship_type="channel_pair",
+            channel_info={'pair_id': pair_id, 'channel': 'B', 'partner_channel': 'A'},
+            metadata=metadata or {}
+        )
+        relationship_ids.append(rel_b_id)
+        
+        return relationship_ids
+    
+    @staticmethod
+    def get_channel_partner(dataset_id: int) -> Optional[Dataset]:
+        """Get the channel partner dataset for a given dataset."""
+        relationships = DatasetRelationshipOperations.get_related_datasets(
+            dataset_id, "channel_pair"
+        )
+        
+        for rel in relationships:
+            # Find the partner dataset ID
+            partner_id = None
+            if rel.parent_dataset_id == dataset_id:
+                partner_id = rel.child_dataset_id
+            elif rel.child_dataset_id == dataset_id:
+                partner_id = rel.parent_dataset_id
+            
+            if partner_id:
+                return DatasetOperations.get_dataset(partner_id)
+        
+        return None
+    
+    @staticmethod
+    def delete_relationship(relationship_id: int) -> bool:
+        """Delete a dataset relationship."""
+        db = get_database()
+        query = "DELETE FROM dataset_relationships WHERE id = ?"
+        return db.execute_update(query, (relationship_id,)) > 0
+    
+    @staticmethod
+    def delete_all_relationships(dataset_id: int) -> int:
+        """Delete all relationships for a dataset."""
+        db = get_database()
+        query = """
+            DELETE FROM dataset_relationships 
+            WHERE parent_dataset_id = ? OR child_dataset_id = ?
+        """
+        return db.execute_update(query, (dataset_id, dataset_id))

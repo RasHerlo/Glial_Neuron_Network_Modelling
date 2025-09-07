@@ -105,6 +105,22 @@ class DatabaseSchema:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
+        """,
+        
+        """
+        CREATE TABLE IF NOT EXISTS dataset_relationships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_dataset_id INTEGER,
+            child_dataset_id INTEGER,
+            relationship_type TEXT NOT NULL,
+            channel_info JSON,
+            metadata JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (parent_dataset_id) REFERENCES datasets (id) ON DELETE CASCADE,
+            FOREIGN KEY (child_dataset_id) REFERENCES datasets (id) ON DELETE CASCADE,
+            UNIQUE(parent_dataset_id, child_dataset_id, relationship_type)
+        )
         """
     ]
     
@@ -119,7 +135,10 @@ class DatabaseSchema:
         "CREATE INDEX IF NOT EXISTS idx_processed_data_dataset_id ON processed_data (dataset_id)",
         "CREATE INDEX IF NOT EXISTS idx_processed_data_processing_job_id ON processed_data (processing_job_id)",
         "CREATE INDEX IF NOT EXISTS idx_processed_data_data_type ON processed_data (data_type)",
-        "CREATE INDEX IF NOT EXISTS idx_analysis_results_processing_job_id ON analysis_results (processing_job_id)"
+        "CREATE INDEX IF NOT EXISTS idx_analysis_results_processing_job_id ON analysis_results (processing_job_id)",
+        "CREATE INDEX IF NOT EXISTS idx_dataset_relationships_parent ON dataset_relationships (parent_dataset_id)",
+        "CREATE INDEX IF NOT EXISTS idx_dataset_relationships_child ON dataset_relationships (child_dataset_id)",
+        "CREATE INDEX IF NOT EXISTS idx_dataset_relationships_type ON dataset_relationships (relationship_type)"
     ]
 
 
@@ -264,4 +283,33 @@ class Figure:
             'parameters': self.parameters,
             'description': self.description,
             'thumbnail_path': self.thumbnail_path
+        }
+
+
+class DatasetRelationship:
+    """Dataset relationship model for database operations."""
+    
+    def __init__(self, id: Optional[int] = None, parent_dataset_id: Optional[int] = None,
+                 child_dataset_id: Optional[int] = None, relationship_type: str = "",
+                 channel_info: Optional[Dict[str, Any]] = None,
+                 metadata: Optional[Dict[str, Any]] = None,
+                 created_at: Optional[datetime] = None):
+        self.id = id
+        self.parent_dataset_id = parent_dataset_id
+        self.child_dataset_id = child_dataset_id
+        self.relationship_type = relationship_type
+        self.channel_info = channel_info or {}
+        self.metadata = metadata or {}
+        self.created_at = created_at
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'id': self.id,
+            'parent_dataset_id': self.parent_dataset_id,
+            'child_dataset_id': self.child_dataset_id,
+            'relationship_type': self.relationship_type,
+            'channel_info': self.channel_info,
+            'metadata': self.metadata,
+            'created_at': self.created_at.isoformat() if self.created_at else None
         }

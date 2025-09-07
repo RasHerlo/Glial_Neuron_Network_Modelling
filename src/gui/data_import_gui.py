@@ -50,6 +50,11 @@ class DataImportGUI:
         ttk.Button(buttons_frame, text="Clear Selection", 
                   command=self.clear_selection).pack(side="left", padx=5)
         
+        # Suite2p import button
+        ttk.Separator(buttons_frame, orient="vertical").pack(side="left", padx=10, fill="y")
+        ttk.Button(buttons_frame, text="Suite2p Multi-Channel", 
+                  command=self.open_suite2p_import).pack(side="left", padx=5)
+        
         # Selected files list
         list_frame = ttk.Frame(file_frame)
         list_frame.pack(fill="both", expand=True, pady=5)
@@ -793,6 +798,14 @@ class DataImportGUI:
         except Exception as e:
             self.progress_var.set("Import failed!")
             messagebox.showerror("Import Error", f"Failed to import data: {str(e)}")
+    
+    def open_suite2p_import(self):
+        """Open the Suite2p multi-channel import GUI."""
+        try:
+            from .suite2p_import_gui import Suite2pImportGUI
+            Suite2pImportGUI(parent=self.window)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open Suite2p import: {str(e)}")
 
 
 if __name__ == "__main__":

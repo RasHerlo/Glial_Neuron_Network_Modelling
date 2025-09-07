@@ -6,7 +6,7 @@ import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, List, Tuple
 import json
 from datetime import datetime
 
@@ -347,6 +347,292 @@ class TextImporter(BaseImporter):
             }
 
 
+class NPYImporter(BaseImporter):
+    """Importer for NumPy array files (.npy)."""
+    
+    def __init__(self):
+        super().__init__()
+        self.supported_formats = ['.npy']
+    
+    def import_file(self, file_path: str, **kwargs) -> Dict[str, Any]:
+        """Import NumPy array file and generate labels.
+        
+        Args:
+            file_path: Path to .npy file
+            **kwargs: Import settings (row_prefix, col_prefix, etc.)
+        """
+        try:
+            # Load numpy array
+            data_array = np.load(file_path)
+            
+            # Validate array
+            if data_array.ndim != 2:
+                return {
+                    'success': False,
+                    'message': f'Expected 2D array, got {data_array.ndim}D array',
+                    'data': None,
+                    'metadata': {}
+                }
+            
+            # Get array dimensions
+            n_rows, n_cols = data_array.shape
+            
+            # Generate row labels (cells) - Cell_0001, Cell_0002, etc.
+            row_prefix = kwargs.get('row_prefix', 'Cell')
+            row_labels = [f"{row_prefix}_{i+1:04d}" for i in range(n_rows)]
+            
+            # Generate column labels (frames) - Frame_00001, Frame_00002, etc.
+            col_prefix = kwargs.get('col_prefix', 'Frame')
+            col_labels = [f"{col_prefix}_{i+1:05d}" for i in range(n_cols)]
+            
+            # Create DataFrame with labels for compatibility
+            df = pd.DataFrame(data_array, index=row_labels, columns=col_labels)
+            
+            # Calculate statistics
+            statistics = {
+                'shape': data_array.shape,
+                'dtype': str(data_array.dtype),
+                'total_elements': data_array.size,
+                'memory_usage_mb': data_array.nbytes / (1024 * 1024),
+                'min_value': float(np.min(data_array)),
+                'max_value': float(np.max(data_array)),
+                'mean_value': float(np.mean(data_array)),
+                'std_value': float(np.std(data_array)),
+                'has_nan': bool(np.isnan(data_array).any()),
+                'has_inf': bool(np.isinf(data_array).any())
+            }
+            
+            # Create metadata
+            metadata = self.get_metadata(file_path, df)
+            metadata.update({
+                'array_statistics': statistics,
+                'import_type': 'numpy_array',
+                'row_prefix': row_prefix,
+                'col_prefix': col_prefix,
+                'original_shape': data_array.shape,
+                'generated_labels': True
+            })
+            
+            return {
+                'success': True,
+                'data': df,
+                'raw_array': data_array,  # Keep original array for saving
+                'row_labels': row_labels,
+                'col_labels': col_labels,
+                'statistics': statistics,
+                'metadata': metadata,
+                'message': f'Successfully imported numpy array with shape {data_array.shape}'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Failed to import numpy array: {str(e)}',
+                'data': None,
+                'metadata': {}
+            }
+    
+    def save_processed_files(self, import_result: Dict[str, Any], output_dir: str, 
+                           base_filename: str) -> Dict[str, str]:
+        """Save processed files for numpy import.
+        
+        Args:
+            import_result: Result from import_file method
+            output_dir: Directory to save files
+            base_filename: Base name for output files
+            
+        Returns:
+            Dict mapping file types to saved file paths
+        """
+        saved_files = {}
+        
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Save original numpy array
+            npy_path = os.path.join(output_dir, f"{base_filename}.npy")
+            np.save(npy_path, import_result['raw_array'])
+            saved_files['original_npy'] = npy_path
+            
+            # Save labeled CSV for compatibility with existing tools
+            csv_path = os.path.join(output_dir, f"{base_filename}_labeled.csv")
+            import_result['data'].to_csv(csv_path)
+            saved_files['labeled_csv'] = csv_path
+            
+            # Save row labels
+            row_labels_path = os.path.join(output_dir, "row_labels.csv")
+            pd.DataFrame({'row_label': import_result['row_labels']}).to_csv(
+                row_labels_path, index=False
+            )
+            saved_files['row_labels'] = row_labels_path
+            
+            # Save column labels
+            col_labels_path = os.path.join(output_dir, "col_labels.csv")
+            pd.DataFrame({'col_label': import_result['col_labels']}).to_csv(
+                col_labels_path, index=False
+            )
+            saved_files['col_labels'] = col_labels_path
+            
+            # Save matrix info
+            matrix_info = {
+                'original_file': import_result['metadata'].get('file_path', ''),
+                'shape': import_result['statistics']['shape'],
+                'dtype': import_result['statistics']['dtype'],
+                'import_timestamp': datetime.now().isoformat(),
+                'statistics': import_result['statistics'],
+                'row_prefix': import_result['metadata']['row_prefix'],
+                'col_prefix': import_result['metadata']['col_prefix']
+            }
+            
+            info_path = os.path.join(output_dir, "matrix_info.json")
+            with open(info_path, 'w') as f:
+                json.dump(matrix_info, f, indent=2)
+            saved_files['matrix_info'] = info_path
+            
+        except Exception as e:
+            print(f"Error saving processed files: {e}")
+        
+        return saved_files
+
+
+class Suite2pDatasetDetector:
+    """Detector for Suite2p dataset structure and multi-channel data."""
+    
+    def __init__(self):
+        self.expected_structure = [
+            "SUPPORT_ChanA", "SUPPORT_ChanB"
+        ]
+        self.suite2p_path = ["derippled", "suite2p", "plane0"]
+    
+    def scan_data_folder(self, data_folder_path: str) -> Dict[str, Any]:
+        """Scan DATA folder for Suite2p structure.
+        
+        Args:
+            data_folder_path: Path to the DATA folder
+            
+        Returns:
+            Dict containing scan results
+        """
+        data_path = Path(data_folder_path)
+        
+        if not data_path.exists():
+            return {
+                'success': False,
+                'message': f'Data folder not found: {data_folder_path}',
+                'channels': {}
+            }
+        
+        channels = {}
+        
+        # Look for channel folders
+        for channel_name in self.expected_structure:
+            channel_path = data_path / channel_name
+            
+            if channel_path.exists():
+                # Navigate to plane0 folder
+                plane0_path = channel_path
+                for subdir in self.suite2p_path:
+                    plane0_path = plane0_path / subdir
+                
+                if plane0_path.exists():
+                    # Find .npy files in plane0
+                    npy_files = list(plane0_path.glob("*.npy"))
+                    
+                    if npy_files:
+                        channels[channel_name] = {
+                            'path': str(plane0_path),
+                            'npy_files': [f.name for f in npy_files],
+                            'full_paths': [str(f) for f in npy_files]
+                        }
+                    else:
+                        channels[channel_name] = {
+                            'path': str(plane0_path),
+                            'npy_files': [],
+                            'full_paths': [],
+                            'warning': 'No .npy files found in plane0 folder'
+                        }
+                else:
+                    channels[channel_name] = {
+                        'path': None,
+                        'npy_files': [],
+                        'full_paths': [],
+                        'error': f'Suite2p structure not found (missing path: {plane0_path})'
+                    }
+        
+        return {
+            'success': len(channels) > 0,
+            'message': f'Found {len(channels)} channels' if channels else 'No channels found',
+            'channels': channels,
+            'data_folder': str(data_path)
+        }
+    
+    def validate_selected_files(self, selected_files: Dict[str, str]) -> Dict[str, Any]:
+        """Validate that selected files from different channels are compatible.
+        
+        Args:
+            selected_files: Dict mapping channel names to selected file paths
+            
+        Returns:
+            Dict containing validation results
+        """
+        if len(selected_files) < 2:
+            return {
+                'valid': True,
+                'message': 'Single channel selected, no compatibility check needed',
+                'warnings': []
+            }
+        
+        shapes = {}
+        warnings = []
+        
+        try:
+            # Load each selected file and check dimensions
+            for channel, file_path in selected_files.items():
+                if not os.path.exists(file_path):
+                    return {
+                        'valid': False,
+                        'message': f'File not found: {file_path}',
+                        'warnings': []
+                    }
+                
+                array = np.load(file_path)
+                shapes[channel] = array.shape
+            
+            # Check time dimension compatibility (columns should match)
+            time_dims = [shape[1] for shape in shapes.values()]
+            
+            if len(set(time_dims)) > 1:
+                warnings.append(
+                    f"Time dimensions don't match: {dict(zip(selected_files.keys(), time_dims))}. "
+                    "This may cause issues in cross-channel analyses."
+                )
+            
+            # Check if cell counts are very different (might be worth noting)
+            cell_counts = [shape[0] for shape in shapes.values()]
+            max_cells = max(cell_counts)
+            min_cells = min(cell_counts)
+            
+            if max_cells > min_cells * 2:  # If one channel has >2x more cells
+                warnings.append(
+                    f"Cell counts vary significantly: {dict(zip(selected_files.keys(), cell_counts))}. "
+                    "This is normal but worth noting."
+                )
+            
+            return {
+                'valid': True,
+                'message': 'Files are compatible' if not warnings else 'Files loaded with warnings',
+                'warnings': warnings,
+                'shapes': shapes
+            }
+            
+        except Exception as e:
+            return {
+                'valid': False,
+                'message': f'Error validating files: {str(e)}',
+                'warnings': []
+            }
+
+
 class DataImportManager:
     """Manager class for coordinating different data importers."""
     
@@ -355,7 +641,8 @@ class DataImportManager:
             CSVImporter(),
             ExcelImporter(),
             JSONImporter(),
-            TextImporter()
+            TextImporter(),
+            NPYImporter()
         ]
         self.folder_manager = DatasetFolderManager()
     
