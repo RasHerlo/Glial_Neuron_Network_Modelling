@@ -354,6 +354,37 @@ class NPYImporter(BaseImporter):
         super().__init__()
         self.supported_formats = ['.npy']
     
+    def apply_nan_columns(self, data_array: np.ndarray, start_col: int, end_col: int) -> np.ndarray:
+        """Insert NaN values in specified column range.
+        
+        Args:
+            data_array: Original 2D numpy array
+            start_col: Start column index (0-based, inclusive)
+            end_col: End column index (0-based, inclusive)
+            
+        Returns:
+            np.ndarray: Array with NaN values inserted in specified columns
+        """
+        if data_array.ndim != 2:
+            raise ValueError(f"Expected 2D array, got {data_array.ndim}D array")
+        
+        # Validate column indices
+        n_rows, n_cols = data_array.shape
+        if start_col < 0 or end_col < 0:
+            raise ValueError("Column indices must be non-negative")
+        if start_col >= n_cols or end_col >= n_cols:
+            raise ValueError(f"Column indices must be < {n_cols}")
+        if start_col > end_col:
+            raise ValueError("Start column must be <= end column")
+        
+        # Create a copy to avoid modifying original array
+        result_array = data_array.copy()
+        
+        # Insert NaN values in specified column range
+        result_array[:, start_col:end_col+1] = np.nan
+        
+        return result_array
+    
     def import_file(self, file_path: str, **kwargs) -> Dict[str, Any]:
         """Import NumPy array file and generate labels.
         
@@ -374,7 +405,24 @@ class NPYImporter(BaseImporter):
                     'metadata': {}
                 }
             
-            # Get array dimensions
+            # Apply NaN insertion if requested
+            nan_insertion = kwargs.get('nan_insertion')
+            if nan_insertion and nan_insertion.get('enabled', False):
+                try:
+                    start_col = nan_insertion.get('start_col', 0)
+                    end_col = nan_insertion.get('end_col', 0)
+                    
+                    if start_col >= 0 and end_col >= 0 and start_col <= end_col:
+                        data_array = self.apply_nan_columns(data_array, start_col, end_col)
+                except Exception as e:
+                    return {
+                        'success': False,
+                        'message': f'Failed to apply NaN insertion: {str(e)}',
+                        'data': None,
+                        'metadata': {}
+                    }
+            
+            # Get array dimensions (after potential NaN insertion)
             n_rows, n_cols = data_array.shape
             
             # Generate row labels (cells) - Cell_0001, Cell_0002, etc.
@@ -433,13 +481,14 @@ class NPYImporter(BaseImporter):
             }
     
     def save_processed_files(self, import_result: Dict[str, Any], output_dir: str, 
-                           base_filename: str) -> Dict[str, str]:
+                           base_filename: str, nan_suffix: bool = False) -> Dict[str, str]:
         """Save processed files for numpy import.
         
         Args:
             import_result: Result from import_file method
             output_dir: Directory to save files
             base_filename: Base name for output files
+            nan_suffix: If True, append '_nans' suffix to filenames
             
         Returns:
             Dict mapping file types to saved file paths
@@ -449,13 +498,16 @@ class NPYImporter(BaseImporter):
         try:
             os.makedirs(output_dir, exist_ok=True)
             
+            # Apply suffix if NaN insertion was used
+            filename_base = f"{base_filename}_nans" if nan_suffix else base_filename
+            
             # Save original numpy array
-            npy_path = os.path.join(output_dir, f"{base_filename}.npy")
+            npy_path = os.path.join(output_dir, f"{filename_base}.npy")
             np.save(npy_path, import_result['raw_array'])
             saved_files['original_npy'] = npy_path
             
             # Save labeled CSV for compatibility with existing tools
-            csv_path = os.path.join(output_dir, f"{base_filename}_labeled.csv")
+            csv_path = os.path.join(output_dir, f"{filename_base}_labeled.csv")
             import_result['data'].to_csv(csv_path)
             saved_files['labeled_csv'] = csv_path
             

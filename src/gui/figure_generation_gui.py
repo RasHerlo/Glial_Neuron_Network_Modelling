@@ -2924,6 +2924,10 @@ class FigureGenerationGUI:
             # Load matrix data
             raster_matrix = np.load(raster_path)
             
+            # Handle invalid data by replacing with NaN (same as Matrix Visualization)
+            if not np.isfinite(raster_matrix).all():
+                raster_matrix = np.where(np.isfinite(raster_matrix), raster_matrix, np.nan)
+            
             # Load row and column labels if available
             row_labels = None
             column_labels = None
@@ -3069,6 +3073,10 @@ class FigureGenerationGUI:
             
             # Load matrix data
             raster_matrix = np.load(raster_path)
+            
+            # Handle invalid data by replacing with NaN (same as Matrix Visualization)
+            if not np.isfinite(raster_matrix).all():
+                raster_matrix = np.where(np.isfinite(raster_matrix), raster_matrix, np.nan)
             
             # Apply sorting if enabled
             if self.pca_sort_rows_enabled.get() and self.pca_row_sorting_vector.get():
@@ -3790,6 +3798,11 @@ class FigureGenerationGUI:
                 return
             raster_path = os.path.join(dataset_path, raster_file)
             raster_matrix = np.load(raster_path)
+            
+            # Handle invalid data by replacing with NaN (same as Matrix Visualization)
+            if not np.isfinite(raster_matrix).all():
+                raster_matrix = np.where(np.isfinite(raster_matrix), raster_matrix, np.nan)
+            
             self.current_raster_data = raster_matrix  # Store for navigation
             
             # Load annotation data
@@ -4322,6 +4335,10 @@ class FigureGenerationGUI:
             raster_file = self.file_selection_widgets['raster_matrix']['var'].get()
             raster_path = os.path.join(dataset_path, raster_file)
             raster_matrix = np.load(raster_path)
+            
+            # Handle invalid data by replacing with NaN (same as Matrix Visualization)
+            if not np.isfinite(raster_matrix).all():
+                raster_matrix = np.where(np.isfinite(raster_matrix), raster_matrix, np.nan)
             
             # Load cluster data
             cluster_file = self.file_selection_widgets['clusters']['var'].get()
@@ -5154,6 +5171,10 @@ class FigureGenerationGUI:
                 return
             raster_path = os.path.join(dataset_path, raster_file)
             raster_matrix = np.load(raster_path)
+            
+            # Handle invalid data by replacing with NaN (same as Matrix Visualization)
+            if not np.isfinite(raster_matrix).all():
+                raster_matrix = np.where(np.isfinite(raster_matrix), raster_matrix, np.nan)
             
             # Load annotation data
             annotation_file = self.file_selection_widgets['annotation']['var'].get()

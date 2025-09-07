@@ -472,8 +472,9 @@ class MatrixModificationProcessor(BaseProcessor):
     def apply_zscore_rowwise(self, matrix_data: np.ndarray) -> np.ndarray:
         """Apply Z-score normalization per row: (x - row_mean) / row_std."""
         # Calculate mean and std per row (axis=1), keep dimensions for broadcasting
-        row_mean = np.mean(matrix_data, axis=1, keepdims=True)
-        row_std = np.std(matrix_data, axis=1, keepdims=True)
+        # Use nanmean and nanstd to handle NaN values properly
+        row_mean = np.nanmean(matrix_data, axis=1, keepdims=True)
+        row_std = np.nanstd(matrix_data, axis=1, keepdims=True)
         
         # Handle rows with zero standard deviation (constant values)
         row_std = np.where(row_std == 0, 1, row_std)
@@ -483,8 +484,9 @@ class MatrixModificationProcessor(BaseProcessor):
     def apply_01_normalization_rowwise(self, matrix_data: np.ndarray) -> np.ndarray:
         """Apply [0,1] normalization per row: (x - row_min) / (row_max - row_min)."""
         # Calculate min and max per row (axis=1), keep dimensions for broadcasting
-        row_min = np.min(matrix_data, axis=1, keepdims=True)
-        row_max = np.max(matrix_data, axis=1, keepdims=True)
+        # Use nanmin and nanmax to handle NaN values properly
+        row_min = np.nanmin(matrix_data, axis=1, keepdims=True)
+        row_max = np.nanmax(matrix_data, axis=1, keepdims=True)
         
         # Handle rows with zero range (constant values)
         row_range = row_max - row_min
@@ -611,16 +613,16 @@ class MatrixModificationProcessor(BaseProcessor):
                 'modified_matrix_shape': modified_matrix.shape,
                 'operation_applied': operation_desc,
                 'original_matrix_stats': {
-                    'mean': float(np.mean(matrix_data)),
-                    'std': float(np.std(matrix_data)),
-                    'min': float(np.min(matrix_data)),
-                    'max': float(np.max(matrix_data))
+                    'mean': float(np.nanmean(matrix_data)),
+                    'std': float(np.nanstd(matrix_data)),
+                    'min': float(np.nanmin(matrix_data)),
+                    'max': float(np.nanmax(matrix_data))
                 },
                 'modified_matrix_stats': {
-                    'mean': float(np.mean(modified_matrix)),
-                    'std': float(np.std(modified_matrix)),
-                    'min': float(np.min(modified_matrix)),
-                    'max': float(np.max(modified_matrix))
+                    'mean': float(np.nanmean(modified_matrix)),
+                    'std': float(np.nanstd(modified_matrix)),
+                    'min': float(np.nanmin(modified_matrix)),
+                    'max': float(np.nanmax(modified_matrix))
                 },
                 'output_file': output_path,
                 'output_format': fileformat

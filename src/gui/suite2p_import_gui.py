@@ -304,6 +304,9 @@ class Suite2pImportGUI:
                 
                 file_var.set(default_file)
                 
+                # Update NaN defaults for the default file selection
+                self.window.after(10, lambda: self.update_nan_defaults(channel_name, file_var, channel_info))
+                
                 # Preview button
                 preview_btn = ttk.Button(
                     file_frame,
@@ -313,8 +316,45 @@ class Suite2pImportGUI:
                 )
                 preview_btn.pack(side="left", padx=5)
                 
+                # Separator
+                ttk.Separator(file_frame, orient="vertical").pack(side="left", fill="y", padx=10)
+                
+                # NaN insertion controls
+                nan_frame = ttk.Frame(file_frame)
+                nan_frame.pack(side="left", padx=5)
+                
+                # NaN insertion toggle (default ON)
+                nan_var = tk.BooleanVar(value=True)
+                nan_checkbox = ttk.Checkbutton(
+                    nan_frame,
+                    text="Insert NaNs",
+                    variable=nan_var
+                )
+                nan_checkbox.pack(side="left")
+                
+                # Start column entry
+                ttk.Label(nan_frame, text="Start:").pack(side="left", padx=(10, 2))
+                start_var = tk.StringVar(value="0")
+                start_entry = ttk.Entry(nan_frame, textvariable=start_var, width=6)
+                start_entry.pack(side="left", padx=(0, 5))
+                
+                # End column entry
+                ttk.Label(nan_frame, text="End:").pack(side="left", padx=(5, 2))
+                end_var = tk.StringVar(value="0")
+                end_entry = ttk.Entry(nan_frame, textvariable=end_var, width=6)
+                end_entry.pack(side="left")
+                
+                # Store NaN control variables
+                setattr(self, f"{channel_name}_nan_enabled", nan_var)
+                setattr(self, f"{channel_name}_nan_start", start_var)
+                setattr(self, f"{channel_name}_nan_end", end_var)
+                
                 # Store file selection variable
                 setattr(self, f"{channel_name}_file_var", file_var)
+                
+                # Bind file selection change to update NaN defaults
+                file_combo.bind('<<ComboboxSelected>>', 
+                    lambda event, cn=channel_name, fv=file_var, ci=channel_info: self.update_nan_defaults(cn, fv, ci))
         
         # Enable import button if we have at least one valid channel
         valid_channels = [ch for ch in channels.values() if 'npy_files' in ch and ch['npy_files']]
@@ -332,8 +372,36 @@ class Suite2pImportGUI:
         file_path = os.path.join(channel_info['path'], selected_file)
         
         try:
-            # Import file for preview
-            result = self.npy_importer.import_file(file_path)
+            # Check if NaN insertion is enabled for preview
+            nan_enabled = getattr(self, f"{channel_name}_nan_enabled", None)
+            apply_nans = nan_enabled and nan_enabled.get()
+            
+            # Prepare import parameters
+            import_kwargs = {}
+            nan_info = ""
+            
+            if apply_nans:
+                # Load matrix to validate NaN range
+                import numpy as np
+                data_array = np.load(file_path)
+                
+                # Validate NaN range
+                is_valid, start_idx, end_idx, error_msg = self.validate_nan_range(channel_name, data_array.shape)
+                
+                if not is_valid:
+                    messagebox.showerror("Invalid NaN Range", f"Cannot preview with NaN insertion:\n{error_msg}")
+                    return
+                
+                if start_idx != 0 or end_idx != 0:  # Only apply if range is valid
+                    import_kwargs['nan_insertion'] = {
+                        'enabled': True,
+                        'start_col': start_idx,
+                        'end_col': end_idx
+                    }
+                    nan_info = f"\nNaN Insertion: Columns {start_idx+1}-{end_idx+1} (inclusive)"
+            
+            # Import file for preview (with NaN insertion if enabled)
+            result = self.npy_importer.import_file(file_path, **import_kwargs)
             
             if result['success']:
                 stats = result['statistics']
@@ -344,7 +412,7 @@ Data Type: {stats['dtype']}
 Memory: {stats['memory_usage_mb']:.2f} MB
 Value Range: {stats['min_value']:.3f} to {stats['max_value']:.3f}
 Mean: {stats['mean_value']:.3f}, Std: {stats['std_value']:.3f}
-Has NaN: {stats['has_nan']}, Has Inf: {stats['has_inf']}"""
+Has NaN: {stats['has_nan']}, Has Inf: {stats['has_inf']}{nan_info}"""
                 
                 messagebox.showinfo(f"Preview - {channel_name}", preview_text)
             else:
@@ -352,6 +420,102 @@ Has NaN: {stats['has_nan']}, Has Inf: {stats['has_inf']}"""
                 
         except Exception as e:
             messagebox.showerror("Preview Error", f"Error previewing file:\n{str(e)}")
+    
+    def get_nan_defaults(self, matrix_shape: tuple) -> tuple:
+        """Get default NaN insertion range based on matrix column count.
+        
+        Args:
+            matrix_shape: Shape tuple (rows, columns)
+            
+        Returns:
+            tuple: (start_column, end_column) - 1-indexed for user display
+        """
+        n_rows, n_cols = matrix_shape
+        
+        if n_cols == 1520:
+            return (721, 734)  # 1-indexed for user display
+        elif n_cols == 2890:
+            return (1378, 1389)  # 1-indexed for user display
+        else:
+            return (0, 0)  # Default for unknown sizes
+    
+    def update_nan_defaults(self, channel_name: str, file_var: tk.StringVar, channel_info: Dict[str, Any]):
+        """Update NaN insertion defaults when file selection changes."""
+        selected_file = file_var.get()
+        if not selected_file:
+            return
+        
+        file_path = os.path.join(channel_info['path'], selected_file)
+        
+        try:
+            # Load matrix to get shape
+            import numpy as np
+            data_array = np.load(file_path)
+            
+            if data_array.ndim == 2:
+                # Get default NaN range
+                start_col, end_col = self.get_nan_defaults(data_array.shape)
+                
+                # Update the UI variables
+                start_var = getattr(self, f"{channel_name}_nan_start", None)
+                end_var = getattr(self, f"{channel_name}_nan_end", None)
+                
+                if start_var and end_var:
+                    start_var.set(str(start_col))
+                    end_var.set(str(end_col))
+                    
+        except Exception as e:
+            print(f"Error updating NaN defaults for {channel_name}: {e}")
+    
+    def validate_nan_range(self, channel_name: str, matrix_shape: tuple) -> tuple:
+        """Validate NaN insertion range for a channel.
+        
+        Args:
+            channel_name: Name of the channel
+            matrix_shape: Shape of the matrix (rows, cols)
+            
+        Returns:
+            tuple: (is_valid, start_col_0indexed, end_col_0indexed, error_message)
+        """
+        try:
+            # Get variables
+            nan_enabled = getattr(self, f"{channel_name}_nan_enabled", None)
+            start_var = getattr(self, f"{channel_name}_nan_start", None)
+            end_var = getattr(self, f"{channel_name}_nan_end", None)
+            
+            if not nan_enabled or not nan_enabled.get():
+                return (True, 0, 0, "")  # NaN insertion disabled, no validation needed
+            
+            if not start_var or not end_var:
+                return (False, 0, 0, "NaN range variables not found")
+            
+            # Parse values
+            try:
+                start_col = int(start_var.get())
+                end_col = int(end_var.get())
+            except ValueError:
+                return (False, 0, 0, "Start and End values must be integers")
+            
+            # Validate range
+            n_rows, n_cols = matrix_shape
+            
+            if start_col <= 0 or end_col <= 0:
+                return (False, 0, 0, "Start and End values must be greater than 0")
+            
+            if start_col > n_cols or end_col > n_cols:
+                return (False, 0, 0, f"Start and End values must be ≤ {n_cols} (matrix columns)")
+            
+            if start_col > end_col:
+                return (False, 0, 0, "Start value must be ≤ End value")
+            
+            # Convert to 0-indexed for processing
+            start_0idx = start_col - 1
+            end_0idx = end_col - 1
+            
+            return (True, start_0idx, end_0idx, "")
+            
+        except Exception as e:
+            return (False, 0, 0, f"Validation error: {str(e)}")
     
     def import_datasets(self):
         """Import the selected datasets."""
@@ -428,8 +592,37 @@ Has NaN: {stats['has_nan']}, Has Inf: {stats['has_inf']}"""
                 
                 dataset_name = f"{base_name}_{channel_suffix}"
                 
-                # Import the file
-                import_result = self.npy_importer.import_file(file_path)
+                # Check if NaN insertion is enabled for this channel
+                nan_enabled = getattr(self, f"{channel_name}_nan_enabled", None)
+                apply_nans = nan_enabled and nan_enabled.get()
+                
+                # Prepare import parameters
+                import_kwargs = {}
+                use_nan_suffix = False
+                
+                if apply_nans:
+                    # Load matrix to validate NaN range
+                    import numpy as np
+                    data_array = np.load(file_path)
+                    
+                    # Validate NaN range
+                    is_valid, start_idx, end_idx, error_msg = self.validate_nan_range(channel_name, data_array.shape)
+                    
+                    if not is_valid:
+                        messagebox.showerror("Invalid NaN Range", 
+                            f"Cannot import {channel_name} with NaN insertion:\n{error_msg}")
+                        continue
+                    
+                    if start_idx != 0 or end_idx != 0:  # Only apply if range is valid
+                        import_kwargs['nan_insertion'] = {
+                            'enabled': True,
+                            'start_col': start_idx,
+                            'end_col': end_idx
+                        }
+                        use_nan_suffix = True
+                
+                # Import the file (with NaN insertion if enabled)
+                import_result = self.npy_importer.import_file(file_path, **import_kwargs)
                 
                 if not import_result['success']:
                     messagebox.showerror(
@@ -459,7 +652,7 @@ Has NaN: {stats['has_nan']}, Has Inf: {stats['has_inf']}"""
                 raw_dir = self.folder_manager.get_raw_data_path(dataset_folder)
                 
                 saved_files = self.npy_importer.save_processed_files(
-                    import_result, raw_dir, base_filename
+                    import_result, raw_dir, base_filename, nan_suffix=use_nan_suffix
                 )
                 
                 # Generate standardized Raster files in processed/matrices for compatibility
