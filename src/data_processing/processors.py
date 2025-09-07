@@ -1166,6 +1166,24 @@ class RuzickaSimilarityProcessor(BaseProcessor):
         
         return sorted(matrix_files)  # Sort alphabetically
     
+    def remove_nan_columns(self, matrix_data: np.ndarray) -> tuple:
+        """Remove columns containing any NaN values.
+        
+        Args:
+            matrix_data: 2D numpy array
+            
+        Returns:
+            tuple: (cleaned_matrix, valid_column_indices, nan_column_count)
+        """
+        # Find columns without any NaN values
+        valid_columns = ~np.any(np.isnan(matrix_data), axis=0)
+        valid_column_indices = np.where(valid_columns)[0]
+        nan_column_count = matrix_data.shape[1] - len(valid_column_indices)
+        
+        # Return cleaned matrix and indices of kept columns
+        cleaned_matrix = matrix_data[:, valid_columns]
+        return cleaned_matrix, valid_column_indices, nan_column_count
+
     def calculate_ruzicka_similarity(self, neuron1: np.ndarray, neuron2: np.ndarray) -> float:
         """Calculate Ruzicka similarity between two neurons.
         
@@ -1189,26 +1207,34 @@ class RuzickaSimilarityProcessor(BaseProcessor):
         
         return sum_min / sum_max
     
-    def calculate_ruzicka_matrix(self, matrix_data: np.ndarray) -> np.ndarray:
+    def calculate_ruzicka_matrix(self, matrix_data: np.ndarray) -> tuple:
         """Calculate Ruzicka similarity matrix for all pairs of neurons.
         
         Args:
             matrix_data: 2D array where rows are neurons and columns are time points
             
         Returns:
-            2D array where (i,j) contains Ruzicka similarity between neuron i and neuron j
+            tuple: (similarity_matrix, nan_column_count)
+                similarity_matrix: 2D array where (i,j) contains Ruzicka similarity between neuron i and neuron j
+                nan_column_count: Number of NaN columns that were removed
         """
-        n_neurons = matrix_data.shape[0]
+        # Remove NaN columns before calculation
+        cleaned_matrix, valid_column_indices, nan_column_count = self.remove_nan_columns(matrix_data)
+        
+        if nan_column_count > 0:
+            print(f"Ruzicka Similarity: Removed {nan_column_count} NaN columns from analysis. Using {cleaned_matrix.shape[1]}/{matrix_data.shape[1]} columns.")
+        
+        n_neurons = cleaned_matrix.shape[0]
         similarity_matrix = np.zeros((n_neurons, n_neurons))
         
-        # Calculate similarity for each pair of neurons
+        # Calculate similarity for each pair of neurons using cleaned data
         for i in range(n_neurons):
             for j in range(n_neurons):
                 similarity_matrix[i, j] = self.calculate_ruzicka_similarity(
-                    matrix_data[i, :], matrix_data[j, :]
+                    cleaned_matrix[i, :], cleaned_matrix[j, :]
                 )
         
-        return similarity_matrix
+        return similarity_matrix, nan_column_count
     
     def get_preview(self, parameters: Dict[str, Any] = None) -> Dict[str, Any]:
         """Generate a preview of the Ruzicka similarity matrix."""
@@ -1264,7 +1290,7 @@ class RuzickaSimilarityProcessor(BaseProcessor):
                 }
             
             # Calculate Ruzicka similarity matrix
-            similarity_matrix = self.calculate_ruzicka_matrix(matrix_data)
+            similarity_matrix, nan_column_count = self.calculate_ruzicka_matrix(matrix_data)
             
             # Generate output filename with matrix suffix
             matrix_suffix = matrix_name.split('_')[-1] if '_' in matrix_name else matrix_name
@@ -1363,7 +1389,7 @@ class RuzickaSimilarityProcessor(BaseProcessor):
             
             # Step 3: Calculate Ruzicka similarity matrix (70%)
             update_progress(70.0)
-            similarity_matrix = self.calculate_ruzicka_matrix(matrix_data)
+            similarity_matrix, nan_column_count = self.calculate_ruzicka_matrix(matrix_data)
             
             # Generate output filename with matrix suffix
             matrix_suffix = matrix_name.split('_')[-1] if '_' in matrix_name else matrix_name
@@ -1384,6 +1410,8 @@ class RuzickaSimilarityProcessor(BaseProcessor):
                 'similarity_matrix_shape': similarity_matrix.shape,
                 'input_matrix_name': matrix_name,
                 'output_matrix_name': output_filename,
+                'nan_columns_removed': nan_column_count,
+                'columns_used_for_analysis': matrix_data.shape[1] - nan_column_count,
                 'similarity_matrix_stats': {
                     'mean': float(np.nanmean(similarity_matrix)),
                     'std': float(np.nanstd(similarity_matrix)),
@@ -1593,6 +1621,24 @@ class HierarchicalClusteringProcessor(BaseProcessor):
             print(f"Error updating labels file {labels_filename}: {str(e)}")
             # Don't fail the entire clustering process if labels file update fails
     
+    def remove_nan_columns(self, matrix_data: np.ndarray) -> tuple:
+        """Remove columns containing any NaN values.
+        
+        Args:
+            matrix_data: 2D numpy array
+            
+        Returns:
+            tuple: (cleaned_matrix, valid_column_indices, nan_column_count)
+        """
+        # Find columns without any NaN values
+        valid_columns = ~np.any(np.isnan(matrix_data), axis=0)
+        valid_column_indices = np.where(valid_columns)[0]
+        nan_column_count = matrix_data.shape[1] - len(valid_column_indices)
+        
+        # Return cleaned matrix and indices of kept columns
+        cleaned_matrix = matrix_data[:, valid_columns]
+        return cleaned_matrix, valid_column_indices, nan_column_count
+
     def perform_hierarchical_clustering(self, matrix_data: np.ndarray, method: str, 
                                       metric: str, cluster_rows: bool) -> tuple:
         """Perform hierarchical clustering and return linkage matrix and indices.
@@ -1609,13 +1655,19 @@ class HierarchicalClusteringProcessor(BaseProcessor):
         from scipy.cluster.hierarchy import linkage
         from scipy.spatial.distance import pdist
         
+        # Remove NaN columns before clustering
+        cleaned_matrix, valid_column_indices, nan_column_count = self.remove_nan_columns(matrix_data)
+        
+        if nan_column_count > 0:
+            print(f"Hierarchical Clustering: Removed {nan_column_count} NaN columns from analysis. Using {cleaned_matrix.shape[1]}/{matrix_data.shape[1]} columns.")
+        
         # Prepare data for clustering
         if cluster_rows:
             # Cluster rows (neurons) - each row is a data point
-            data_for_clustering = matrix_data
+            data_for_clustering = cleaned_matrix
         else:
             # Cluster columns (time points) - transpose so each column becomes a row
-            data_for_clustering = matrix_data.T
+            data_for_clustering = cleaned_matrix.T
         
         # Handle special case for ward method (only works with euclidean)
         if method == 'ward' and metric != 'euclidean':
@@ -1638,7 +1690,7 @@ class HierarchicalClusteringProcessor(BaseProcessor):
         from scipy.cluster.hierarchy import leaves_list
         cluster_indices = leaves_list(linkage_matrix)
         
-        return linkage_matrix, cluster_indices
+        return linkage_matrix, cluster_indices, nan_column_count
     
     def process_with_progress(self, parameters: Dict[str, Any] = None, 
                             progress_callback: Callable[[float], None] = None) -> Dict[str, Any]:
@@ -1719,15 +1771,11 @@ class HierarchicalClusteringProcessor(BaseProcessor):
             
             # Step 3: Prepare data for clustering (50%)
             update_progress(50.0)
-            # Check for NaN values and handle them
-            if np.any(np.isnan(matrix_data)):
-                nan_count = np.sum(np.isnan(matrix_data))
-                print(f"Warning: {nan_count} NaN values detected in matrix. These will affect clustering results.")
             
             # Step 4: Perform hierarchical clustering (70%)
             update_progress(70.0)
             try:
-                linkage_matrix, cluster_indices = self.perform_hierarchical_clustering(
+                linkage_matrix, cluster_indices, nan_column_count = self.perform_hierarchical_clustering(
                     matrix_data, clustering_method, distance_metric, cluster_rows
                 )
             except Exception as e:
@@ -1783,6 +1831,8 @@ class HierarchicalClusteringProcessor(BaseProcessor):
                 'output_folder': folder_name,
                 'labels_file_updated': labels_file,
                 'clustering_column_name': folder_name,
+                'nan_columns_removed': nan_column_count,
+                'columns_used_for_analysis': matrix_data.shape[1] - nan_column_count,
                 'output_files': {
                     'linkage_matrix': linkage_output_path,
                     'cluster_indices': indices_output_path,
