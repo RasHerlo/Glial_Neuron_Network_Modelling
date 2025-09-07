@@ -121,6 +121,15 @@ class MainMenuGUI:
         nav_buttons_frame = ttk.Frame(nav_frame)
         nav_buttons_frame.pack(expand=True)
         
+        # Choose Database button
+        database_btn = ttk.Button(
+            nav_buttons_frame,
+            text="Choose Database",
+            command=self.open_database_selection,
+            width=20
+        )
+        database_btn.pack(pady=10)
+        
         # Data Import button
         data_import_btn = ttk.Button(
             nav_buttons_frame,
@@ -171,15 +180,36 @@ class MainMenuGUI:
         settings_frame = ttk.Frame(self.notebook)
         self.notebook.add(settings_frame, text="Settings")
         
-        # Database info
-        db_frame = ttk.LabelFrame(settings_frame, text="Database Information", padding=10)
+        # Database workspace info
+        db_frame = ttk.LabelFrame(settings_frame, text="Database Workspace", padding=10)
         db_frame.pack(fill="x", padx=10, pady=5)
         
-        ttk.Button(db_frame, text="View Database Info", 
-                  command=self.show_database_info).pack(pady=5)
+        # Current workspace display
+        self.workspace_path_var = tk.StringVar()
+        workspace_frame = ttk.Frame(db_frame)
+        workspace_frame.pack(fill="x", pady=5)
         
-        ttk.Button(db_frame, text="Backup Database", 
-                  command=self.backup_database).pack(pady=5)
+        ttk.Label(workspace_frame, text="Current Workspace:").pack(anchor="w")
+        workspace_label = ttk.Label(
+            workspace_frame, 
+            textvariable=self.workspace_path_var,
+            font=("Courier", 9),
+            foreground="blue"
+        )
+        workspace_label.pack(anchor="w", padx=(10, 0))
+        
+        # Buttons
+        buttons_frame = ttk.Frame(db_frame)
+        buttons_frame.pack(fill="x", pady=5)
+        
+        ttk.Button(buttons_frame, text="Choose Database", 
+                  command=self.open_database_selection).pack(side="left", padx=(0, 5))
+        
+        ttk.Button(buttons_frame, text="View Database Info", 
+                  command=self.show_database_info).pack(side="left", padx=5)
+        
+        ttk.Button(buttons_frame, text="Backup Database", 
+                  command=self.backup_database).pack(side="left", padx=5)
         
         # Application settings
         app_frame = ttk.LabelFrame(settings_frame, text="Application Settings", padding=10)
@@ -197,6 +227,16 @@ class MainMenuGUI:
     def load_dashboard_data(self):
         """Load and display dashboard statistics."""
         try:
+            # Update workspace information
+            from ..database.workspace import get_workspace_manager
+            workspace_manager = get_workspace_manager()
+            workspace_info = workspace_manager.get_workspace_info()
+            
+            if 'workspace_path' in workspace_info:
+                self.workspace_path_var.set(workspace_info['workspace_path'])
+            else:
+                self.workspace_path_var.set("No workspace selected")
+            
             # Get statistics
             datasets = DatasetOperations.list_datasets()
             active_jobs = ProcessingJobOperations.get_active_jobs()
@@ -276,6 +316,23 @@ Tables and Row Counts:
         """Apply application settings."""
         # This would normally save settings to database
         messagebox.showinfo("Settings", "Settings applied successfully!")
+    
+    def open_database_selection(self):
+        """Open the database selection GUI."""
+        try:
+            from .database_selection_gui import DatabaseSelectionGUI
+            
+            def on_workspace_changed():
+                """Callback when workspace is changed."""
+                # Refresh dashboard data to reflect new workspace
+                self.load_dashboard_data()
+                messagebox.showinfo("Database Changed", 
+                                  "Database workspace has been changed successfully!\n"
+                                  "Dashboard has been refreshed.")
+            
+            DatabaseSelectionGUI(parent=self.root, callback=on_workspace_changed)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open database selection: {str(e)}")
     
     def open_data_import(self):
         """Open the data import GUI."""

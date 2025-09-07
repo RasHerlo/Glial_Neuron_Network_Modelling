@@ -11,9 +11,17 @@ from typing import Tuple, Optional, List, Dict
 class DatasetFolderManager:
     """Manages dataset folder structure and organization."""
     
-    def __init__(self, base_data_dir: str = "data"):
-        self.base_data_dir = Path(base_data_dir)
-        self.datasets_dir = self.base_data_dir / "datasets"
+    def __init__(self, base_data_dir: str = None):
+        if base_data_dir is None:
+            # Get base directory from current workspace
+            from ..database.workspace import get_current_workspace
+            workspace = get_current_workspace()
+            self.base_data_dir = workspace.workspace_path
+            self.datasets_dir = workspace.datasets_path
+        else:
+            self.base_data_dir = Path(base_data_dir)
+            self.datasets_dir = self.base_data_dir / "datasets"
+        
         self.shared_dir = self.base_data_dir / "shared"
     
     def create_dataset_folder(self, dataset_id: int, dataset_name: str, use_clean_names: bool = True) -> str:

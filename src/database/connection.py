@@ -177,10 +177,28 @@ class DatabaseConnection:
 _db_instance: Optional[DatabaseConnection] = None
 
 
-def get_database(db_path: str = "data/pipeline.db") -> DatabaseConnection:
-    """Get or create the global database instance."""
+def get_database(db_path: str = None) -> DatabaseConnection:
+    """Get or create the database instance.
+    
+    Args:
+        db_path: Optional path to database. If None, uses current workspace database.
+        
+    Returns:
+        DatabaseConnection: Database connection instance
+    """
     global _db_instance
-    if _db_instance is None:
+    
+    # If no specific path provided, get from current workspace
+    if db_path is None:
+        # Import here to avoid circular imports
+        from .workspace import get_current_workspace
+        workspace = get_current_workspace()
+        return workspace.get_database_connection()
+    
+    # For specific path requests, use the global instance pattern
+    if _db_instance is None or _db_instance.db_path != db_path:
+        if _db_instance is not None:
+            _db_instance.close()
         _db_instance = DatabaseConnection(db_path)
     return _db_instance
 
